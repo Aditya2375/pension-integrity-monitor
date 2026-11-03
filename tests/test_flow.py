@@ -14,6 +14,7 @@ def client():
     return app_module.app.test_client()
 
 def login(c):
+    app_module._ATTEMPTS.clear()
     return c.post("/login", data={"key": "officer"}, follow_redirects=True)
 
 def test_end_to_end():

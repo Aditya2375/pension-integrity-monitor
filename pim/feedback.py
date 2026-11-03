@@ -7,7 +7,8 @@ from . import db
 OUTCOMES = ("confirmed_deceased", "confirmed_alive")
 
 def record_outcome(conn, case_id, outcome, note=""):
-    assert outcome in OUTCOMES
+    if outcome not in OUTCOMES:
+        raise ValueError(f"unknown outcome: {outcome!r}")
     conn.execute("UPDATE cases SET outcome=?, outcome_note=? WHERE id=?", (outcome, note, case_id))
     db.log(conn, "officer", "outcome", f"case={case_id} outcome={outcome}")
 

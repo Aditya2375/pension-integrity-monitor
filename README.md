@@ -1,5 +1,8 @@
 # Pension Integrity Monitor
 
+Live: https://pension-integrity-monitor.onrender.com (free tier; sleeps when idle, first load may take a minute). Officer pages need the deployment's officer key; the appeal portal is public.
+
+
 Ranks pensioners for human review when public-record signals suggest a death may have gone unreported, and manages the full officer review, family appeal and outcome-feedback loop around that ranking.
 
 The system never stops a pension by itself. Flags only order a review queue. A pension is held only by an officer, only after every verification step is complete, and only with written reasons. Families get a tracking ID, a deadline and a public appeal portal. A release pays full arrears for every day held.
