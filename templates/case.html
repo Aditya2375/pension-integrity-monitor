@@ -116,6 +116,17 @@
     <p><button class="btn warn">Reopen this case</button></p></form>
 </div>
 {% endif %}
+{% if st in ['NOTICE','HELD'] and role == 'supervisor' and me.username not in [case['proposed_by'], case['approved_by']] and (not case['appeal_deadline_at'] or case['appeal_deadline_at'] < now_iso) %}
+<div class="card">
+  <h2>Late appeal</h2>
+  <p>The appeal period has ended. This is a demo policy, not a legal rule. You can still take a late appeal into review with a reason code. Another supervisor will decide it.</p>
+  <form method="post" action="{{ url_for('late_appeal_route', cid=case['id']) }}">{{ csrf() }}
+    <label for="lc">Reason</label>
+    <select id="lc" name="code">{% for k, v in late_reasons.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+    <label for="ln">Note, in writing</label><input id="ln" type="text" name="note" required maxlength="2000">
+    <p><button class="btn warn">Take late appeal into review</button></p></form>
+</div>
+{% endif %}
 {% if st in ['NOTICE','HELD'] and role == 'supervisor' and case['case_kind'] != 'death' %}
 <div class="card">
   <h2>Supervisor actions</h2>

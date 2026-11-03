@@ -51,8 +51,8 @@ EDGE_ACTIONS = {
     ("CLOSED_CONFIRMED", "APPEAL_REVIEW"): {"reopen"},
     ("DEATH_PROPOSED", "VERIFICATION"): {"reject_confirm_death", "reject_death"},
     ("NOTICE", "HELD"): {"suspend"},
-    ("NOTICE", "APPEAL_REVIEW"): {"appeal_filed"},
-    ("HELD", "APPEAL_REVIEW"): {"appeal_filed"},
+    ("NOTICE", "APPEAL_REVIEW"): {"appeal_filed", "late_appeal_accepted"},
+    ("HELD", "APPEAL_REVIEW"): {"appeal_filed", "late_appeal_accepted"},
     ("NOTICE", "RELEASED"): {"release"},
     ("HELD", "RELEASED"): {"release"},
     ("APPEAL_REVIEW", "RELEASED"): {"appeal_reversed"},
@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS decisions (
   proposer TEXT NOT NULL, reason TEXT NOT NULL, proposed_at TEXT NOT NULL,
   approver TEXT, decided_at TEXT, status TEXT NOT NULL DEFAULT 'PENDING', decision_note TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS one_pending_decision ON decisions(case_id) WHERE status='PENDING';
 CREATE TABLE IF NOT EXISTS case_notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER NOT NULL, ts TEXT NOT NULL,
   author TEXT NOT NULL, body TEXT NOT NULL
@@ -163,6 +164,11 @@ def jurisdiction_of(conn, case):
 
 
 def _need(conn, actor, action, case):
+    # Re-check the account inside the transaction: a revoked or re-roled user
+    # cannot finish an action that was started before the change.
+    row = conn.execute("SELECT role, active, jurisdictions FROM users WHERE username=?", (actor.username,)).fetchone()
+    if row is not None and (not row["active"] or row["role"] != actor.role):
+        raise WorkflowError(f"'{actor.username}' is no longer authorised")
     if not identity.authorized(actor.principal(), action, jurisdiction_of(conn, case)):
         raise WorkflowError(f"'{actor.username}' ({actor.role}) is not authorised for {action} on this case")
 
@@ -171,7 +177,15 @@ def new_tracking_id():
     return "APL-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(10))
 
 
+def _lock(conn):
+    """Take the database write lock before reading anything a decision depends
+    on, so two actors cannot both act on the same state."""
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+
+
 def _case(conn, cid):
+    _lock(conn)
     c = conn.execute("SELECT * FROM cases WHERE id=?", (cid,)).fetchone()
     if not c:
         raise WorkflowError("case not found")
@@ -380,6 +394,54 @@ def reopen(conn, cid, actor, reason):
     _request_reinstatement(conn, cid, "PROVISIONAL", actor.username, arrears)
 
 
+LATE_REASONS = {
+    "NOT_RECEIVED": "Notice not received",
+    "ILLNESS": "Illness or hospital stay",
+    "ADDRESS": "Address or contact changed",
+    "NEW_EVIDENCE": "New evidence found",
+    "OTHER_RECORDED": "Other, explained in the note",
+}
+
+
+def accept_late_appeal(conn, cid, actor, code, note):
+    """Demo policy, not statutory: the appeal window is a configurable setting.
+    A supervisor may still take a late appeal into review, with a fixed reason
+    code and a written note. Payment is restored provisionally and a different
+    supervisor decides it."""
+    c = _case(conn, cid)
+    _need(conn, actor, "resolve_appeal", c)
+    if code not in LATE_REASONS:
+        raise WorkflowError("choose one of the listed reason codes")
+    if not (note or "").strip():
+        raise WorkflowError("a written note is required")
+    if c["state"] not in ("NOTICE", "HELD") or c["case_kind"] == "death" and c["state"] != "NOTICE":
+        raise WorkflowError("this case is not open to a late appeal")
+    if actor.username in (c["proposed_by"], c["approved_by"]):
+        raise WorkflowError("someone who took part in the original decision cannot take it in late")
+    dl = c["appeal_deadline_at"]
+    if dl and _parse(_now()) <= _parse(dl):
+        raise WorkflowError("the appeal period is still open; the family can file normally")
+    now = _now()
+    arrears = _arrears(conn, c, now)
+    row = conn.execute("SELECT * FROM appeals WHERE case_id=? AND status='NOTICE' ORDER BY id DESC", (cid,)).fetchone()
+    stmt = "Late appeal accepted by a supervisor: " + LATE_REASONS[code]
+    if row:
+        if conn.execute("UPDATE appeals SET status='OPEN', statement=?, submitted_at=? WHERE id=? AND status='NOTICE'",
+                        (stmt, now, row["id"])).rowcount != 1:
+            raise WorkflowError("an appeal has already been filed for this notice")
+        tid = row["tracking_id"]
+    else:
+        tid = new_tracking_id()
+        conn.execute("INSERT INTO appeals(tracking_id,case_id,submitted_at,statement,status) VALUES(?,?,?,?,'OPEN')",
+                     (tid, cid, now, stmt))
+    conn.execute("UPDATE cases SET arrears=?, suspended_at=NULL, restored_at=? WHERE id=?", (arrears, now, cid))
+    _move(conn, c, "APPEAL_REVIEW", actor, "late_appeal_accepted", reopened_by=actor.username)
+    conn.execute("INSERT INTO case_notes(case_id,ts,author,body) VALUES(?,?,?,?)",
+                 (cid, now, actor.username, f"Late appeal accepted [{code}]: " + note.strip()[:3800]))
+    _request_reinstatement(conn, cid, "PROVISIONAL", actor.username, arrears)
+    notify.enqueue(conn, cid, "appeal_received", {"tracking_id": tid})
+
+
 def suspend(conn, cid, actor, override_reason=""):
     """Start suspending payment once the notice period has run. A supervisor
     may shorten it only with a written, audited reason."""
@@ -398,6 +460,7 @@ def suspend(conn, cid, actor, override_reason=""):
 def file_appeal(conn, tracking_id, statement, contact=""):
     """Family appeal against a notice. Restores payment provisionally at
     once. Returns the case id."""
+    _lock(conn)
     n = conn.execute("SELECT * FROM appeals WHERE tracking_id=?", (tracking_id,)).fetchone()
     if not n:
         raise WorkflowError("no case found for that tracking ID")
@@ -412,7 +475,7 @@ def file_appeal(conn, tracking_id, statement, contact=""):
         raise WorkflowError("this case is not open to appeal")
     dl = c["appeal_deadline_at"]
     if not dl or _parse(_now()) > _parse(dl):
-        raise WorkflowError("The appeal period for this notice has ended. Please contact your pension office.")
+        raise WorkflowError("The appeal period for this notice has ended. Please contact your pension office, which can still take a late appeal into review.")
     actor = Actor("appellant", "family")
     now = _now()
     arrears = _arrears(conn, c, now)

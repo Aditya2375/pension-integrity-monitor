@@ -24,7 +24,7 @@ Flag -> review and verify (exactly the four pipeline checks, each once) -> offic
 Hold: after the notice period a supervisor may recommend suspension (earlier only with a written reason).
 Death confirmation: never final on first approval. It goes through the same notice. It can be finalised only after the whole notice and appeal period has ended with no appeal, with no override, by a supervisor other than the proposer. After finalising, a supervisor who took no part in the original decision can reopen it at any time with a written reason. Payment is then requested back provisionally and a third supervisor decides.
 
-Appeal: allowed until the deadline and refused after it for every kind of case. A missing deadline is treated as closed. It restores payment provisionally at once. A supervisor who was not the proposer, approver or reopener decides it. If it is accepted, a full reinstatement request is recorded.
+Appeal: the family portal accepts it until the deadline and refuses after it. The window length is a configurable demo policy and is not taken from any scheme rule. After the deadline a supervisor who took no part in the decision can still take a late appeal into review with a fixed reason code (notice not received, illness, address change, new evidence, other) and a written note. It restores payment provisionally and a different supervisor decides it. A missing deadline is treated as closed. It restores payment provisionally at once. A supervisor who was not the proposer, approver or reopener decides it. If it is accepted, a full reinstatement request is recorded.
 
 Every edge in the state machine can only be taken by its named workflow action (`EDGE_ACTIONS`), so no route can bypass a rule.
 Outputs to the payment system: `cases.payment_status` and `reinstatement_requests`. This system records requests. It does not move money, and the pension feed tables are never written.
@@ -43,3 +43,6 @@ Off by default. When enabled: a PDF, JPG or PNG up to 5 MB goes through a struct
 ## Not done yet
 Visual design pass (waiting for references), screen-reader and keyboard audit on the final design, more languages, a supervisor dashboard for SLA overdue counts, production identity provider adapter, external audit checkpoint export job.
 README.md, render.yaml and SECURITY_REVIEW.md still describe the old single officer key and need updating by the docs owner.
+
+## Concurrency
+Every workflow action takes the database write lock (`BEGIN IMMEDIATE`) before it reads the case, so two people cannot act on the same state. A unique index allows one pending decision per case. The account is re-checked inside the transaction, so a user revoked or re-roled mid-request cannot complete the action. Tests race proposals, approvals, rejections, appeals, finalise, late intake, reopen and revocation. SQLite is single-writer; a production database would use row locks or version checks with the same unique index.

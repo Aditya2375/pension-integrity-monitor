@@ -279,7 +279,7 @@ def case_detail(cid):
     return render_template("case.html", case=case, sigs=sigs, ver=ver, match=match, appeals=appeals,
                            evidence=evidence, decisions=decisions, notes=notes, survivor=survivor,
                            reinst=reinst, outbox=outbox, delivery_ready=bool(app.config.get('NOTIFY_ADAPTER')), trail=trail, pending=pending, me=current_actor(), mask=_mask,
-                           sla=wf.sla_status(case))
+                           sla=wf.sla_status(case), now_iso=wf._now(), late_reasons=wf.LATE_REASONS)
 
 def _act(cid, fn, ok_msg, roles=("officer", "supervisor")):
     """Run one workflow action for the signed-in user, committing the change
@@ -362,6 +362,11 @@ def finalize_death_route(cid):
 def reopen_route(cid):
     return _act(cid, lambda c, a: wf.reopen(c, cid, a, request.form.get("note")),
                 "Reopened. A reinstatement request was recorded and an independent supervisor will decide.", ("supervisor",))
+
+@app.route("/case/<int:cid>/late-appeal", methods=["POST"])
+def late_appeal_route(cid):
+    return _act(cid, lambda c, a: wf.accept_late_appeal(c, cid, a, request.form.get("code"), request.form.get("note")),
+                "Late appeal taken into review. Payment is provisionally restored and another supervisor decides.", ("supervisor",))
 
 @app.route("/case/<int:cid>/appeal-decision", methods=["POST"])
 def appeal_decision(cid):
