@@ -36,6 +36,10 @@ def to_notice(c):
     wf.decide(c, 1, SUP, True)
 
 
+def tid(c):
+    return c.execute("SELECT tracking_id FROM appeals WHERE case_id=1").fetchone()["tracking_id"]
+
+
 def case(c):
     return c.execute("SELECT * FROM cases WHERE id=1").fetchone()
 
@@ -78,7 +82,7 @@ def test_notice_period_enforced(c):
 def test_appeal_restores_and_independent_review(c):
     to_notice(c)
     wf.suspend(c, 1, SUP, "override")
-    wf.file_appeal(c, 1, "I am alive")
+    wf.file_appeal(c, tid(c), "I am alive")
     k = case(c)
     assert k["state"] == "APPEAL_REVIEW" and k["payment_status"] == "PROVISIONALLY_RESTORED"
     with pytest.raises(WorkflowError):
@@ -90,7 +94,7 @@ def test_appeal_restores_and_independent_review(c):
 
 def test_appeal_upheld_resuspends(c):
     to_notice(c)
-    wf.file_appeal(c, 1, "x")
+    wf.file_appeal(c, tid(c), "x")
     wf.resolve_appeal(c, 1, SUP2, True, "documents forged")
     assert case(c)["state"] == "HELD" and case(c)["payment_status"] == "SUSPENDED"
 
@@ -158,7 +162,7 @@ def test_audit_holds_no_free_text(c):
 
 def test_reinstatement_is_a_request_not_a_payment(c):
     to_notice(c)
-    wf.file_appeal(c, 1, "alive")
+    wf.file_appeal(c, tid(c), "alive")
     r = c.execute("SELECT kind,status FROM reinstatement_requests").fetchall()
     assert [(x["kind"], x["status"]) for x in r] == [("PROVISIONAL", "REQUESTED")]
     wf.resolve_appeal(c, 1, SUP2, False, "alive")
@@ -171,3 +175,31 @@ def test_jurisdiction_scope(c):
     verified_actor = Actor("offx", "officer", ("MH",))
     with pytest.raises(WorkflowError):
         wf.complete_step(c, 1, 1, True, "", verified_actor)
+
+
+def test_notice_enqueues_message_without_personal_data(c):
+    to_notice(c)
+    from pim import notify
+    rows = notify.pending(c)
+    assert [r["template"] for r in rows] == ["notice_issued"]
+    text = notify.render(rows[0])
+    assert tid(c) in text and "Test Person" not in text and "P1" not in text.split(tid(c))[0]
+
+
+def test_one_appeal_per_notice_and_unknown_id(c):
+    to_notice(c)
+    wf.file_appeal(c, tid(c), "first")
+    with pytest.raises(WorkflowError):
+        wf.file_appeal(c, tid(c), "second")
+    with pytest.raises(WorkflowError):
+        wf.file_appeal(c, "APL-NOPE", "x")
+
+
+def test_outbox_delivery_retries_then_fails(c):
+    to_notice(c)
+    from pim import notify
+    class Bad(notify.Adapter):
+        def send(self, row, text): raise RuntimeError("gateway down")
+    for _ in range(notify.MAX_ATTEMPTS):
+        notify.deliver(c, Bad())
+    assert c.execute("SELECT status FROM notifications").fetchone()["status"] == "FAILED"

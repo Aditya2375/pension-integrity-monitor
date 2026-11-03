@@ -12,7 +12,9 @@ Rules enforced here (not in the routes), so every caller gets them:
   * Every change writes a hash-chained audit entry in the same transaction.
 """
 from datetime import datetime, timedelta
-from . import audit
+import secrets
+import string
+from . import audit, notify
 from security import identity
 
 ROLES = ("officer", "supervisor", "auditor", "admin")
@@ -97,6 +99,7 @@ def _parse(ts):
 def ensure_schema(conn):
     conn.executescript(DDL)
     audit.ensure(conn)
+    notify.ensure(conn)
     have = {r["name"] for r in conn.execute("PRAGMA table_info(cases)")}
     for col, typ in CASE_COLUMNS.items():
         if col not in have:
@@ -128,6 +131,10 @@ def jurisdiction_of(conn, case):
 def _need(conn, actor, action, case):
     if not identity.authorized(actor.principal(), action, jurisdiction_of(conn, case)):
         raise WorkflowError(f"'{actor.username}' ({actor.role}) is not authorised for {action} on this case")
+
+
+def new_tracking_id():
+    return "APL-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(10))
 
 
 def _case(conn, cid):
@@ -268,6 +275,10 @@ def decide(conn, cid, actor, approve, note=""):
         _move(conn, c, "NOTICE", actor, "approve_hold", f"notice_days={days}",
               approved_by=actor.username, notice_issued_at=now, notice_due_at=due,
               hold_reasons=d["reason"])
+        tid = new_tracking_id()
+        conn.execute("INSERT INTO appeals(tracking_id,case_id,submitted_at,statement,status) VALUES(?,?,?,?,'NOTICE')",
+                     (tid, cid, now, "Notice issued"))
+        notify.enqueue(conn, cid, "notice_issued", {"tracking_id": tid, "due": due[:10]})
     else:
         _move(conn, c, "SURVIVOR_ROUTING", actor, "approve_death", "", approved_by=actor.username,
               outcome="confirmed_deceased", outcome_note=d["reason"])
@@ -290,8 +301,18 @@ def suspend(conn, cid, actor, override_reason=""):
           override_reason=(override_reason or "").strip()[:500] or None)
 
 
-def file_appeal(conn, cid, statement, contact=""):
-    """Family appeal. Restores payment provisionally straight away."""
+def file_appeal(conn, tracking_id, statement, contact=""):
+    """Family appeal against a notice. Restores payment provisionally at
+    once. Returns the case id."""
+    n = conn.execute("SELECT * FROM appeals WHERE tracking_id=?", (tracking_id,)).fetchone()
+    if not n:
+        raise WorkflowError("no case found for that tracking ID")
+    if n["status"] != "NOTICE":
+        raise WorkflowError("an appeal has already been filed for this notice")
+    statement = (statement or "").strip()
+    if not statement:
+        raise WorkflowError("please describe why the decision is wrong")
+    cid = n["case_id"]
     c = _case(conn, cid)
     if c["state"] not in ("NOTICE", "HELD"):
         raise WorkflowError("this case is not open to appeal")
@@ -302,10 +323,13 @@ def file_appeal(conn, cid, statement, contact=""):
     actor = Actor("appellant", "family")
     now = _now()
     arrears = _arrears(conn, c, now)
+    conn.execute("UPDATE appeals SET status='OPEN', statement=?, contact=?, submitted_at=? WHERE id=?",
+                 (statement[:5000], (contact or "")[:200], now, n["id"]))
     conn.execute("UPDATE cases SET arrears=?, suspended_at=NULL, restored_at=? WHERE id=?", (arrears, now, cid))
-    _move(conn, _case(conn, cid), "APPEAL_REVIEW", actor, "appeal_filed", "provisional restore")
+    _move(conn, _case(conn, cid), "APPEAL_REVIEW", actor, "appeal_filed", "")
     _request_reinstatement(conn, cid, "PROVISIONAL", "appellant", arrears)
-    return arrears
+    notify.enqueue(conn, cid, "appeal_received", {"tracking_id": tracking_id})
+    return cid
 
 
 def resolve_appeal(conn, cid, actor, uphold, note):
@@ -318,6 +342,10 @@ def resolve_appeal(conn, cid, actor, uphold, note):
     if not (note or "").strip():
         raise WorkflowError("a written decision is required")
     now = _now()
+    conn.execute("UPDATE appeals SET status=?, decision=?, resolved_at=? WHERE case_id=? AND status='OPEN'",
+                 ("UPHELD" if uphold else "RELEASED", note.strip()[:2000], now, cid))
+    tid = conn.execute("SELECT tracking_id FROM appeals WHERE case_id=? ORDER BY id DESC", (cid,)).fetchone()["tracking_id"]
+    notify.enqueue(conn, cid, "appeal_upheld" if uphold else "appeal_reversed", {"tracking_id": tid})
     if uphold:
         _move(conn, c, "HELD", actor, "appeal_upheld", note[:200], held_at=now, suspended_at=now, restored_at=None)
     else:
