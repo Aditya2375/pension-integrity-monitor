@@ -24,12 +24,13 @@ TRANSITIONS = {
     "UNDER_REVIEW": {"VERIFICATION", "DISMISSED"},
     "VERIFICATION": {"HOLD_PROPOSED", "DEATH_PROPOSED", "DISMISSED"},
     "HOLD_PROPOSED": {"NOTICE", "VERIFICATION"},
-    "DEATH_PROPOSED": {"SURVIVOR_ROUTING", "VERIFICATION"},
-    "NOTICE": {"HELD", "APPEAL_REVIEW", "RELEASED"},
+    "DEATH_PROPOSED": {"NOTICE", "VERIFICATION"},
+    "NOTICE": {"HELD", "APPEAL_REVIEW", "RELEASED", "SURVIVOR_ROUTING"},
     "HELD": {"APPEAL_REVIEW", "RELEASED"},
-    "APPEAL_REVIEW": {"RELEASED", "HELD"},
-    "SURVIVOR_ROUTING": {"CLOSED_CONFIRMED"},
-    "RELEASED": set(), "DISMISSED": set(), "CLOSED_CONFIRMED": set(),
+    "APPEAL_REVIEW": {"RELEASED", "HELD", "SURVIVOR_ROUTING"},
+    "SURVIVOR_ROUTING": {"CLOSED_CONFIRMED", "APPEAL_REVIEW"},
+    "CLOSED_CONFIRMED": {"APPEAL_REVIEW"},
+    "RELEASED": set(), "DISMISSED": set(),
 }
 # Which action may take each edge. A route can never move a case along an
 # edge unless the matching workflow function is the one doing it.
@@ -43,7 +44,11 @@ EDGE_ACTIONS = {
     ("VERIFICATION", "DEATH_PROPOSED"): {"propose_confirm_death"},
     ("HOLD_PROPOSED", "NOTICE"): {"approve_hold"},
     ("HOLD_PROPOSED", "VERIFICATION"): {"reject_hold"},
-    ("DEATH_PROPOSED", "SURVIVOR_ROUTING"): {"approve_death"},
+    ("DEATH_PROPOSED", "NOTICE"): {"approve_death"},
+    ("NOTICE", "SURVIVOR_ROUTING"): {"finalize_death"},
+    ("APPEAL_REVIEW", "SURVIVOR_ROUTING"): {"appeal_upheld"},
+    ("SURVIVOR_ROUTING", "APPEAL_REVIEW"): {"reopen"},
+    ("CLOSED_CONFIRMED", "APPEAL_REVIEW"): {"reopen"},
     ("DEATH_PROPOSED", "VERIFICATION"): {"reject_confirm_death", "reject_death"},
     ("NOTICE", "HELD"): {"suspend"},
     ("NOTICE", "APPEAL_REVIEW"): {"appeal_filed"},
@@ -103,7 +108,7 @@ CREATE TABLE IF NOT EXISTS appeal_evidence (
 """
 CASE_COLUMNS = {
     "proposed_by": "TEXT", "approved_by": "TEXT", "notice_issued_at": "TEXT",
-    "notice_due_at": "TEXT", "suspended_at": "TEXT", "restored_at": "TEXT",
+    "notice_due_at": "TEXT", "suspended_at": "TEXT", "restored_at": "TEXT", "case_kind": "TEXT DEFAULT 'hold'", "appeal_deadline_at": "TEXT", "reopened_by": "TEXT",
     "state_changed_at": "TEXT", "override_reason": "TEXT", "payment_status": "TEXT DEFAULT 'ACTIVE'", "review_reasons": "TEXT", "source_feed_refs": "TEXT",
 }
 
@@ -309,21 +314,70 @@ def decide(conn, cid, actor, approve, note=""):
         _move(conn, c, "VERIFICATION", actor, f"reject_{d['kind']}")
         return
     now = _now()
-    if d["kind"] == "hold":
-        days = _setting_days(conn, "notice_period_days", NOTICE_DAYS_DEFAULT)
-        due = (_parse(now) + timedelta(days=days)).isoformat(timespec="seconds") + "Z"
-        _move(conn, c, "NOTICE", actor, "approve_hold",
-              approved_by=actor.username, notice_issued_at=now, notice_due_at=due,
-              hold_reasons=d["reason"])
-        tid = new_tracking_id()
-        conn.execute("INSERT INTO appeals(tracking_id,case_id,submitted_at,statement,status) VALUES(?,?,?,?,'NOTICE')",
-                     (tid, cid, now, "Notice issued"))
-        notify.enqueue(conn, cid, "notice_issued", {"tracking_id": tid, "due": due[:10]})
-    else:
-        _move(conn, c, "SURVIVOR_ROUTING", actor, "approve_death", approved_by=actor.username,
-              outcome="confirmed_deceased", outcome_note=d["reason"])
-        for s in SURVIVOR_CHECKLIST:
-            conn.execute("INSERT INTO survivor_steps(case_id,step) VALUES(?,?)", (cid, s))
+    days = _setting_days(conn, "notice_period_days", NOTICE_DAYS_DEFAULT)
+    window = _setting_days(conn, "appeal_window_days", 30)
+    due = (_parse(now) + timedelta(days=days)).isoformat(timespec="seconds") + "Z"
+    deadline = (_parse(now) + timedelta(days=window)).isoformat(timespec="seconds") + "Z"
+    kind = "death" if d["kind"] == "confirm_death" else "hold"
+    # Both kinds go through the same notice, appeal and independent review.
+    # A death is never final on first approval; payment continues meanwhile.
+    _move(conn, c, "NOTICE", actor, "approve_hold" if kind == "hold" else "approve_death",
+          approved_by=actor.username, notice_issued_at=now, notice_due_at=due, appeal_deadline_at=deadline,
+          case_kind=kind, hold_reasons=d["reason"])
+    tid = new_tracking_id()
+    conn.execute("INSERT INTO appeals(tracking_id,case_id,submitted_at,statement,status) VALUES(?,?,?,?,'NOTICE')",
+                 (tid, cid, now, "Notice issued"))
+    notify.enqueue(conn, cid, "notice_issued" if kind == "hold" else "death_notice_issued",
+                   {"tracking_id": tid, "due": deadline[:10]})
+
+
+def _start_survivor_routing(conn, cid):
+    conn.execute("DELETE FROM survivor_steps WHERE case_id=? AND done=0", (cid,))
+    have = {r["step"] for r in conn.execute("SELECT step FROM survivor_steps WHERE case_id=?", (cid,))}
+    for st in SURVIVOR_CHECKLIST:
+        if st not in have:
+            conn.execute("INSERT INTO survivor_steps(case_id,step) VALUES(?,?)", (cid, st))
+
+
+def finalize_death(conn, cid, actor):
+    """Make a death confirmation final. Only after the whole appeal period
+    has ended with no appeal. Never before, and no override."""
+    c = _case(conn, cid)
+    _need(conn, actor, "approve_decision", c)
+    if c["case_kind"] != "death" or c["state"] != "NOTICE":
+        raise WorkflowError("only a death notice that has had no appeal can be finalised")
+    if actor.username in (c["proposed_by"],):
+        raise WorkflowError("the person who proposed the confirmation cannot finalise it")
+    now = _now()
+    end = max(c["notice_due_at"] or "", c["appeal_deadline_at"] or "")
+    if not end or now < end:
+        raise WorkflowError(f"the notice and appeal period runs until {end[:10]}; a death cannot be finalised earlier")
+    _move(conn, c, "SURVIVOR_ROUTING", actor, "finalize_death", suspended_at=now,
+          outcome="confirmed_deceased", outcome_note=c["hold_reasons"])
+    _start_survivor_routing(conn, cid)
+    tid = conn.execute("SELECT tracking_id FROM appeals WHERE case_id=? ORDER BY id DESC", (cid,)).fetchone()["tracking_id"]
+    notify.enqueue(conn, cid, "death_finalized", {"tracking_id": tid})
+
+
+def reopen(conn, cid, actor, reason):
+    """A supervisor reopens a death that may be wrong, at any time. Payment is
+    requested back provisionally and an independent supervisor decides."""
+    c = _case(conn, cid)
+    _need(conn, actor, "resolve_appeal", c)
+    if not (reason or "").strip():
+        raise WorkflowError("a written reason is required to reopen")
+    if actor.username in (c["proposed_by"], c["approved_by"]):
+        raise WorkflowError("someone who took part in the original decision cannot reopen it")
+    now = _now()
+    arrears = _arrears(conn, c, now)
+    tid = new_tracking_id()
+    conn.execute("INSERT INTO appeals(tracking_id,case_id,submitted_at,statement,status) VALUES(?,?,?,?,'OPEN')",
+                 (tid, cid, now, "Reopened by a supervisor"))
+    conn.execute("UPDATE cases SET arrears=?, suspended_at=NULL, restored_at=? WHERE id=?", (arrears, now, cid))
+    _move(conn, c, "APPEAL_REVIEW", actor, "reopen", reopened_by=actor.username, outcome=None)
+    conn.execute("INSERT INTO case_notes(case_id,ts,author,body) VALUES(?,?,?,?)",
+                 (cid, now, actor.username, "Reopened: " + reason.strip()[:3900]))
+    _request_reinstatement(conn, cid, "PROVISIONAL", actor.username, arrears)
 
 
 def suspend(conn, cid, actor, override_reason=""):
@@ -331,8 +385,8 @@ def suspend(conn, cid, actor, override_reason=""):
     may shorten it only with a written, audited reason."""
     c = _case(conn, cid)
     _need(conn, actor, "approve_decision", c)
-    if c["state"] != "NOTICE":
-        raise WorkflowError("only a case in notice can be suspended")
+    if c["state"] != "NOTICE" or c["case_kind"] == "death":
+        raise WorkflowError("only a hold notice can be suspended; a death notice is finalised separately")
     now = _now()
     if _parse(now) < _parse(c["notice_due_at"]) and not (override_reason or "").strip():
         raise WorkflowError(f"notice period runs until {c['notice_due_at']}; give a written reason to override")
@@ -356,15 +410,16 @@ def file_appeal(conn, tracking_id, statement, contact=""):
     c = _case(conn, cid)
     if c["state"] not in ("NOTICE", "HELD"):
         raise WorkflowError("this case is not open to appeal")
-    window = _setting_days(conn, "appeal_window_days", 30)
-    start = c["notice_issued_at"] or c["held_at"]
-    if start and _parse(_now()) > _parse(start) + timedelta(days=window):
-        raise WorkflowError("the appeal window for this case has closed")
+    dl = c["appeal_deadline_at"]
+    if not dl or _parse(_now()) > _parse(dl):
+        raise WorkflowError("The appeal period for this notice has ended. Please contact your pension office.")
     actor = Actor("appellant", "family")
     now = _now()
     arrears = _arrears(conn, c, now)
-    conn.execute("UPDATE appeals SET status='OPEN', statement=?, contact=?, submitted_at=? WHERE id=?",
-                 (statement[:5000], (contact or "")[:200], now, n["id"]))
+    claimed = conn.execute("UPDATE appeals SET status='OPEN', statement=?, contact=?, submitted_at=? WHERE id=? AND status='NOTICE'",
+                           (statement[:5000], (contact or "")[:200], now, n["id"])).rowcount
+    if claimed != 1:   # lost a race with another submission of the same notice
+        raise WorkflowError("an appeal has already been filed for this notice")
     conn.execute("UPDATE cases SET arrears=?, suspended_at=NULL, restored_at=? WHERE id=?", (arrears, now, cid))
     _move(conn, _case(conn, cid), "APPEAL_REVIEW", actor, "appeal_filed")
     _request_reinstatement(conn, cid, "PROVISIONAL", "appellant", arrears)
@@ -377,7 +432,7 @@ def resolve_appeal(conn, cid, actor, uphold, note):
     _need(conn, actor, "resolve_appeal", c)
     if c["state"] != "APPEAL_REVIEW":
         raise WorkflowError("case is not under appeal review")
-    if actor.username in (c["proposed_by"], c["approved_by"]):
+    if actor.username in (c["proposed_by"], c["approved_by"], c["reopened_by"]):
         raise WorkflowError("the appeal must be decided by a supervisor who took no part in the original decision")
     if not (note or "").strip():
         raise WorkflowError("a written decision is required")
@@ -386,7 +441,11 @@ def resolve_appeal(conn, cid, actor, uphold, note):
                  ("UPHELD" if uphold else "RELEASED", note.strip()[:2000], now, cid))
     tid = conn.execute("SELECT tracking_id FROM appeals WHERE case_id=? ORDER BY id DESC", (cid,)).fetchone()["tracking_id"]
     notify.enqueue(conn, cid, "appeal_upheld" if uphold else "appeal_reversed", {"tracking_id": tid})
-    if uphold:
+    if uphold and c["case_kind"] == "death":
+        _move(conn, c, "SURVIVOR_ROUTING", actor, "appeal_upheld", suspended_at=now, restored_at=None,
+              outcome="confirmed_deceased", outcome_note=note.strip())
+        _start_survivor_routing(conn, cid)
+    elif uphold:
         _move(conn, c, "HELD", actor, "appeal_upheld", held_at=now, suspended_at=now, restored_at=None)
     else:
         _move(conn, c, "RELEASED", actor, "appeal_reversed", released_at=now,

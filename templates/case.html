@@ -100,7 +100,23 @@
 </div>
 {% endif %}
 
-{% if st in ['NOTICE','HELD'] and role == 'supervisor' %}
+{% if st == 'NOTICE' and case['case_kind'] == 'death' and role == 'supervisor' %}
+<div class="card">
+  <h2>Death notice</h2>
+  <p>Payment continues. The family can appeal until <b>{{ (case['appeal_deadline_at'] or '')[:10] }}</b>. The death can be finalised only after that date, if no appeal came in.</p>
+  <form method="post" action="{{ url_for('finalize_death_route', cid=case['id']) }}">{{ csrf() }}<button class="btn warn">Finalise death confirmation</button></form>
+</div>
+{% endif %}
+{% if st in ['SURVIVOR_ROUTING','CLOSED_CONFIRMED'] and role == 'supervisor' and me.username not in [case['proposed_by'], case['approved_by']] %}
+<div class="card">
+  <h2>Wrongly recorded death?</h2>
+  <p>A death can be reopened at any time. Payment is requested back provisionally and another supervisor decides.</p>
+  <form method="post" action="{{ url_for('reopen_route', cid=case['id']) }}">{{ csrf() }}
+    <label for="ro">Reason, in writing</label><input id="ro" type="text" name="note" required maxlength="2000">
+    <p><button class="btn warn">Reopen this case</button></p></form>
+</div>
+{% endif %}
+{% if st in ['NOTICE','HELD'] and role == 'supervisor' and case['case_kind'] != 'death' %}
 <div class="card">
   <h2>Supervisor actions</h2>
   {% if st == 'NOTICE' %}
@@ -124,7 +140,7 @@
 <div class="card">
   <h2>Appeal under review</h2>
   <p>Payment is provisionally restored while this is decided. The decision must come from a supervisor who took no part in the first decision.</p>
-  {% if role == 'supervisor' and me.username not in [case['proposed_by'], case['approved_by']] %}
+  {% if role == 'supervisor' and me.username not in [case['proposed_by'], case['approved_by'], case['reopened_by']] %}
   <form method="post" action="{{ url_for('appeal_decision', cid=case['id']) }}">
     {{ csrf() }}
     <label for="an">Decision, in writing (shared with the family)</label>
@@ -157,7 +173,11 @@
   <p><b>{{ a['status'] }}</b> &middot; reference <code>{{ a['tracking_id'] }}</code> &middot; {{ a['submitted_at'] }}<br>
   {{ a['statement'] }}{% if a['decision'] %}<br><span class="muted">Decision: {{ a['decision'] }}</span>{% endif %}</p>
   {% endfor %}
-  {% for e in evidence %}<p><a href="{{ url_for('evidence_file', eid=e['id']) }}">Evidence file {{ e['id'] }}</a> <span class="muted">({{ e['mime'] }}, {{ e['size'] // 1024 }} KB, SHA-256 {{ e['sha256'][:12] }}...). Not virus-scanned: structure checked only. Open it in a sandboxed viewer.</span></p>{% endfor %}
+  {% for e in evidence %}<p>{% if e['status'] == 'RELEASED' %}<a href="{{ url_for('evidence_file', eid=e['id']) }}">Evidence file {{ e['id'] }}</a>{% else %}Evidence file {{ e['id'] }} (in quarantine){% endif %} <span class="muted">({{ e['mime'] }}, {{ e['size'] // 1024 }} KB, SHA-256 {{ e['sha256'][:12] }}...). Not virus-scanned: structure checked only. Status: {{ e['status'].title() }}.</span>
+  {% if e['status'] == 'QUARANTINED' %}{% if role == 'supervisor' %}
+  <form method="post" action="{{ url_for('evidence_release', eid=e['id']) }}" class="row">{{ csrf() }}
+    <label><input type="checkbox" name="attest" value="1" required> I opened this file in an isolated viewer and it is safe to release to staff.</label>
+    <button class="btn ghost">Release file</button></form>{% else %}<span class="muted">Waiting for a supervisor to release it.</span>{% endif %}{% endif %}</p>{% endfor %}
   {% for r in reinst %}<p>Reinstatement request ({{ r['kind'].lower() }}): {{ r['status'].lower() }}, arrears due {{ '%.2f'|format(r['arrears_due']) }}. <span class="muted">This system records the request. The payer confirms the payment.</span></p>{% endfor %}
 </div>
 {% endif %}

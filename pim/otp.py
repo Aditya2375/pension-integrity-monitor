@@ -44,11 +44,58 @@ def issue(conn, tracking_id, lang="en"):
 
 
 def check(conn, tracking_id, code):
-    r = conn.execute("SELECT * FROM otp_codes WHERE tracking_id=?", (tracking_id,)).fetchone()
-    if not r or r["tries"] >= MAX_TRIES or _now() > datetime.fromisoformat(r["expires_at"]):
+    """Redeem a code. Each statement is atomic and the final DELETE decides:
+    of two simultaneous correct submissions exactly one deletes the row and
+    wins. A wrong try is counted before the comparison, so tries cannot be
+    skipped by racing."""
+    now = _now().isoformat(timespec="seconds")
+    counted = conn.execute("UPDATE otp_codes SET tries=tries+1 WHERE tracking_id=? AND tries<? AND expires_at>?",
+                           (tracking_id, MAX_TRIES, now)).rowcount
+    if counted != 1:
         return False
-    conn.execute("UPDATE otp_codes SET tries=tries+1 WHERE tracking_id=?", (tracking_id,))
-    if hmac.compare_digest(_h((code or "").strip(), tracking_id), r["code_hash"]):
-        conn.execute("DELETE FROM otp_codes WHERE tracking_id=?", (tracking_id,))
-        return True
-    return False
+    won = conn.execute("DELETE FROM otp_codes WHERE tracking_id=? AND code_hash=? AND expires_at>?",
+                       (tracking_id, _h((code or "").strip(), tracking_id), now)).rowcount
+    return won == 1
+
+
+GRANT_TTL_MIN = 30
+GRANT_DDL = """
+CREATE TABLE IF NOT EXISTS portal_grants (
+  token_hash TEXT PRIMARY KEY, tracking_id TEXT NOT NULL, expires_at TEXT NOT NULL
+);
+"""
+
+
+def grant(conn, tracking_id):
+    """After a correct code: a short-lived server-side grant. The browser
+    holds only a random token; expiry and revocation are decided here."""
+    conn.executescript(GRANT_DDL)
+    token = secrets.token_urlsafe(32)
+    exp = (_now() + timedelta(minutes=GRANT_TTL_MIN)).isoformat(timespec="seconds")
+    conn.execute("DELETE FROM portal_grants WHERE expires_at<=?", (_now().isoformat(timespec="seconds"),))
+    conn.execute("INSERT INTO portal_grants(token_hash,tracking_id,expires_at) VALUES(?,?,?)",
+                 (hashlib.sha256(token.encode()).hexdigest(), tracking_id, exp))
+    return token
+
+
+def grant_tid(conn, token):
+    """Tracking ID for a live grant, else None."""
+    if not token:
+        return None
+    conn.executescript(GRANT_DDL)
+    r = conn.execute("SELECT tracking_id FROM portal_grants WHERE token_hash=? AND expires_at>?",
+                     (hashlib.sha256(str(token).encode()).hexdigest(), _now().isoformat(timespec="seconds"))).fetchone()
+    return r["tracking_id"] if r else None
+
+
+def consume_grant(conn, token):
+    """Single use: returns True only for the one caller that deletes it."""
+    if not token:
+        return False
+    return conn.execute("DELETE FROM portal_grants WHERE token_hash=? AND expires_at>?",
+                        (hashlib.sha256(str(token).encode()).hexdigest(), _now().isoformat(timespec="seconds"))).rowcount == 1
+
+
+def revoke_grant(conn, token):
+    if token:
+        conn.execute("DELETE FROM portal_grants WHERE token_hash=?", (hashlib.sha256(str(token).encode()).hexdigest(),))

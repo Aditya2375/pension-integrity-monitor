@@ -98,10 +98,23 @@ _PDF_BAD = re.compile(rb"/(JavaScript|JS|Launch|OpenAction|AA|EmbeddedFile|Embed
 
 
 def parse_pdf(data):
+    """Structural sanity only. Walk the file the way a reader starts: header,
+    trailer with /Root, startxref pointing at a real xref table or xref stream
+    object, and every object closed. Active content is refused outright."""
     if not re.match(rb"%PDF-(1\.[0-7]|2\.0)\r?\n", data[:12]):
         raise EvidenceError("not a PDF")
-    if b"%%EOF" not in data[-1100:] or b"startxref" not in data[-1100:] or b" obj" not in data:
+    tail = data[-1100:]
+    if not tail.rstrip().endswith(b"%%EOF"):
         raise EvidenceError("The PDF is incomplete.")
+    m = re.search(rb"startxref\s+(\d+)\s+%%EOF\s*$", tail)
+    if not m:
+        raise EvidenceError("The PDF is incomplete.")
+    off = int(m.group(1))
+    if not (0 < off < len(data)) or not (data[off:off + 4] == b"xref" or re.match(rb"\d+\s+\d+\s+obj\b", data[off:off + 30])):
+        raise EvidenceError("The PDF index is damaged.")
+    opens, closes = len(re.findall(rb"(?<![A-Za-z0-9])\d+\s+\d+\s+obj\b", data)), len(re.findall(rb"\bendobj\b", data))
+    if opens < 1 or opens != closes or not re.search(rb"/Root\s+\d+\s+\d+\s+R", data):
+        raise EvidenceError("The PDF is damaged.")
     if re.search(rb"/[A-Za-z]*#[0-9A-Fa-f]{2}", data) or _PDF_BAD.search(data):
         raise EvidenceError("The PDF contains features that are not accepted. Please send a plain scan or photo.")
 
@@ -141,3 +154,16 @@ def store(directory, data, ext):
     with os.fdopen(fd, "wb") as fh:
         fh.write(data)
     return path
+
+
+def readable_path(directory, path, expected_sha256):
+    """Refuse to serve anything that moved out of quarantine or changed."""
+    import hashlib
+    qdir = os.path.realpath(os.path.join(directory, "quarantine"))
+    real = os.path.realpath(path)
+    if os.path.commonpath([qdir, real]) != qdir or not os.path.isfile(real):
+        raise EvidenceError("evidence file is not where it should be")
+    with open(real, "rb") as fh:
+        if hashlib.sha256(fh.read()).hexdigest() != expected_sha256:
+            raise EvidenceError("evidence file changed since upload")
+    return real

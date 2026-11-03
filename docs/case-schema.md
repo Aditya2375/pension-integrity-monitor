@@ -18,6 +18,7 @@ Stored on `cases` as `probability`/`priority` (existing), `review_reasons` and
 ## Case states
 FLAGGED, UNDER_REVIEW, VERIFICATION, HOLD_PROPOSED, DEATH_PROPOSED, NOTICE,
 HELD, APPEAL_REVIEW, RELEASED, DISMISSED, SURVIVOR_ROUTING, CLOSED_CONFIRMED.
+`cases.case_kind` is `hold` or `death`. Both kinds pass through NOTICE.
 The transition table is `pim/workflow.py: TRANSITIONS`; anything else raises.
 
 ## Outbound (to payment systems and integration adapters)
@@ -28,9 +29,9 @@ The transition table is `pim/workflow.py: TRANSITIONS`; anything else raises.
 | ACTIVE | pay normally (default; also after release) |
 | PROVISIONALLY_RESTORED | appeal filed, pay while a second supervisor reviews |
 | SUSPENDED | notice period ran (or supervisor override), payment held |
-| STOP_DECEASED | death confirmed by two people; route to survivor/family pension |
+| STOP_DECEASED | death finalised after notice and appeal period with no appeal, or after an independent appeal review upheld it; route to survivor/family pension. Can be reopened. |
 
-Other case fields: `proposed_by`, `approved_by`, `notice_issued_at`,
+Other case fields: `case_kind`, `appeal_deadline_at`, `reopened_by`, `proposed_by`, `approved_by`, `notice_issued_at`,
 `notice_due_at`, `suspended_at`, `restored_at`, `arrears`, `state_changed_at`.
 
 ## Related tables

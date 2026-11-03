@@ -23,6 +23,7 @@ install_csrf(app)
 TRUSTED_PROXIES = tuple(x.strip() for x in os.environ.get("PIM_TRUSTED_PROXIES", "").split(",") if x.strip())
 DEMO_SHOW_OTP = os.environ.get("PIM_DEMO_SHOW_OTP") == "1"   # synthetic demo only
 EVIDENCE_DIR = os.environ.get("PIM_EVIDENCE_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "evidence"))
+EVIDENCE_ENABLED = os.environ.get("PIM_EVIDENCE_ENABLED") == "1"   # off unless explicitly enabled
 app.config["NOTIFY_ADAPTER"] = None   # set by the integration lane; None means nothing is ever sent
 _limiter = None
 
@@ -352,6 +353,16 @@ def survivor_step(cid, sid):
     return _act(cid, lambda c, a: wf.complete_survivor_step(c, cid, sid, f.get("done") == "1", f.get("note", "")[:500], a),
                 "Step updated.", ("officer",))
 
+@app.route("/case/<int:cid>/finalize-death", methods=["POST"])
+def finalize_death_route(cid):
+    return _act(cid, lambda c, a: wf.finalize_death(c, cid, a),
+                "Death confirmation finalised after the full notice and appeal period. " + _delivery_note(), ("supervisor",))
+
+@app.route("/case/<int:cid>/reopen", methods=["POST"])
+def reopen_route(cid):
+    return _act(cid, lambda c, a: wf.reopen(c, cid, a, request.form.get("note")),
+                "Reopened. A reinstatement request was recorded and an independent supervisor will decide.", ("supervisor",))
+
 @app.route("/case/<int:cid>/appeal-decision", methods=["POST"])
 def appeal_decision(cid):
     uphold = request.form.get("verdict") == "uphold"
@@ -381,12 +392,43 @@ def evidence_file(eid):
     if not e:
         c.close(); abort(404)
     _case_row(c, e["case_id"])
+    if e["status"] != "RELEASED":
+        c.close()
+        return redirect(url_for("case_detail", cid=e["case_id"], err="This file is still in quarantine. A supervisor must release it after checking it in an isolated viewer."))
+    try:
+        real = evidence.readable_path(EVIDENCE_DIR, e["stored_path"], e["sha256"])
+    except evidence.EvidenceError as ex:
+        c.close()
+        return redirect(url_for("case_detail", cid=e["case_id"], err=str(ex)))
     audit.append(c, current_actor().username, "evidence_viewed", e["case_id"], f"evidence{eid}", current_actor().role)
     c.commit(); c.close()
     ext = {"application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg"}.get(e["mime"], "bin")
-    resp = send_file(e["stored_path"], mimetype="application/octet-stream", as_attachment=True, download_name=f"evidence-{eid}.{ext}")
+    resp = send_file(real, mimetype="application/octet-stream", as_attachment=True, download_name=f"evidence-{eid}.{ext}")
     resp.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
     return resp
+
+@app.route("/evidence/<int:eid>/release", methods=["POST"])
+def evidence_release(eid):
+    r = guard("supervisor")
+    if r: return r
+    me = current_actor()
+    c = conn()
+    e = c.execute("SELECT appeal_evidence.*, appeals.case_id FROM appeal_evidence JOIN appeals ON appeals.id=appeal_id WHERE appeal_evidence.id=?", (eid,)).fetchone()
+    if not e:
+        c.close(); abort(404)
+    _case_row(c, e["case_id"])
+    if request.form.get("attest") != "1":
+        c.close()
+        return redirect(url_for("case_detail", cid=e["case_id"], err="Tick the box to confirm you checked the file in an isolated viewer."))
+    try:
+        evidence.readable_path(EVIDENCE_DIR, e["stored_path"], e["sha256"])
+    except evidence.EvidenceError as ex:
+        c.close()
+        return redirect(url_for("case_detail", cid=e["case_id"], err=str(ex)))
+    c.execute("UPDATE appeal_evidence SET status='RELEASED' WHERE id=? AND status='QUARANTINED'", (eid,))
+    audit.append(c, me.username, "evidence_released", e["case_id"], f"evidence{eid}", me.role)
+    c.commit(); c.close()
+    return redirect(url_for("case_detail", cid=e["case_id"], msg="File released to staff for download."))
 
 # ---- public family portal ---------------------------------------------------
 def _store_evidence(c, appeal_id, f):
@@ -394,6 +436,8 @@ def _store_evidence(c, appeal_id, f):
     quarantine area. Raises WorkflowError with a plain message on any problem."""
     if not f or not getattr(f, "filename", ""):
         return None
+    if not EVIDENCE_ENABLED:
+        raise WorkflowError("Uploading documents is switched off on this system. Take your documents to your pension office.")
     data = f.stream.read(evidence.MAX_BYTES + 1)
     try:
         ext, mime = evidence.validate(data)
@@ -404,6 +448,7 @@ def _store_evidence(c, appeal_id, f):
                     (appeal_id, wf._now(), "upload." + ext, mime, len(data), hashlib.sha256(data).hexdigest(), path))
     case_id = c.execute("SELECT case_id FROM appeals WHERE id=?", (appeal_id,)).fetchone()["case_id"]
     audit.append(c, "appellant", "evidence_uploaded", case_id, f"evidence{cur.lastrowid}", "family")
+    return path
 
 def _portal_ctx(c, tid, L):
     row = c.execute("SELECT appeals.*, cases.state, cases.notice_issued_at, cases.held_at, cases.payment_status, cases.id AS cid "
@@ -418,8 +463,10 @@ def _portal_ctx(c, tid, L):
 @app.route("/appeal", methods=["GET", "POST"])
 def appeal_portal():
     L = lang()
-    verified = session.get("appeal_ok")
-    ctx = dict(delivery_ready=bool(app.config.get("NOTIFY_ADAPTER")), L=L, t=lambda k, **kw: i18n.t(k, L, **kw), langs=i18n.LANGS, step="ref", err=None, info=None,
+    c0 = conn()
+    verified = otp.grant_tid(c0, session.get("appeal_grant"))
+    c0.close()
+    ctx = dict(evidence_enabled=EVIDENCE_ENABLED, delivery_ready=bool(app.config.get("NOTIFY_ADAPTER")), L=L, t=lambda k, **kw: i18n.t(k, L, **kw), langs=i18n.LANGS, step="ref", err=None, info=None,
                demo_code=None, found=None, submitted=False)
     c = conn()
     try:
@@ -447,26 +494,42 @@ def appeal_portal():
                 ok = bool(tid) and allow("otp-try", tid, 8, 900) and otp.check(c, tid, request.form.get("code"))
                 c.commit()
                 if ok:
-                    session["appeal_ok"] = tid
+                    session["appeal_grant"] = otp.grant(c, tid)
+                    c.commit()
                     verified = tid
                 else:
                     ctx.update(step="code", err="That code is not valid or has expired.")
             elif action == "appeal" and verified:
+                stored = []
                 try:
                     cid = wf.file_appeal(c, verified, request.form.get("statement"), request.form.get("contact", ""))
                     aid = c.execute("SELECT id FROM appeals WHERE tracking_id=?", (verified,)).fetchone()["id"]
-                    _store_evidence(c, aid, request.files.get("evidence"))
+                    p = _store_evidence(c, aid, request.files.get("evidence"))
+                    if p:
+                        stored.append(p)
+                    if not otp.consume_grant(c, session.get("appeal_grant")):
+                        raise WorkflowError("Your session has ended. Please ask for a new code.")
                     c.commit()
+                    session.pop("appeal_grant", None)
                     ctx["submitted"] = True
-                except WorkflowError as e:
+                    verified = None
+                except Exception as e:   # roll back the database and remove any file already written
                     c.rollback()
+                    for p in stored:
+                        try:
+                            os.unlink(p)
+                        except OSError:
+                            pass
+                    if not isinstance(e, WorkflowError):
+                        raise
                     ctx["err"] = str(e)
             elif action == "signout":
-                session.pop("appeal_ok", None); session.pop("appeal_pending", None); verified = None
+                otp.revoke_grant(c, session.get("appeal_grant")); c.commit()
+                session.pop("appeal_grant", None); session.pop("appeal_pending", None); verified = None
         if verified:
             ctx.update(step="status", found=_portal_ctx(c, verified, L))
             if not ctx["found"]:
-                session.pop("appeal_ok", None); ctx.update(step="ref", found=None)
+                session.pop("appeal_grant", None); ctx.update(step="ref", found=None)
     finally:
         c.close()
     return render_template("appeal.html", **ctx)

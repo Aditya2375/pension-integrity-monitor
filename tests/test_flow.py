@@ -99,10 +99,15 @@ def test_end_to_end(fresh_db):
     # evidence is reachable by staff only, as a download
     assert Client().get("/evidence/1").status_code == 302
     r = rev.get("/evidence/1")
+    assert r.status_code == 302      # still quarantined
+    sup2.post("/evidence/1/release", {"attest": "1"})
+    r = rev.get("/evidence/1")
     assert r.status_code == 200 and "attachment" in r.headers["Content-Disposition"]
 
     # family sees the decision
-    assert b"accepted" in fam.get("/appeal").data
+    fam2 = Client()
+    code2 = fam2.post("/appeal", {"action": "send_code", "tracking_id": tid}, csrf="/appeal").data.split(b"<b>")[1].split(b"</b>")[0].decode()
+    assert b"accepted" in fam2.post("/appeal", {"action": "check_code", "code": code2}, csrf="/appeal").data
 
 
 def test_export_neutralises_formulas(fresh_db):

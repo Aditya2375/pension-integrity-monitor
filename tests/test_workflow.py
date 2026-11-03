@@ -120,11 +120,19 @@ def test_illegal_and_role_checks(c):
         wf.propose(c, 1, "hold", OFF, "r")     # terminal
 
 
+def expire_notice(c):
+    c.execute("UPDATE cases SET notice_due_at='2020-01-01T00:00:00Z', appeal_deadline_at='2020-01-01T00:00:00Z' WHERE id=1")
+
+
 def test_survivor_routing(c):
     verified(c)
     wf.propose(c, 1, "confirm_death", OFF, "registry match plus hospital record")
     wf.decide(c, 1, SUP, True)
-    assert case(c)["state"] == "SURVIVOR_ROUTING"
+    k = case(c)
+    assert k["state"] == "NOTICE" and k["case_kind"] == "death" and k["payment_status"] == "ACTIVE"
+    expire_notice(c)
+    wf.finalize_death(c, 1, SUP)
+    assert case(c)["state"] == "SURVIVOR_ROUTING" and case(c)["payment_status"] == "STOP_DECEASED"
     for s in c.execute("SELECT id FROM survivor_steps").fetchall():
         wf.complete_survivor_step(c, 1, s["id"], True, "", OFF)
     assert case(c)["state"] == "CLOSED_CONFIRMED"
@@ -204,3 +212,96 @@ def test_outbox_delivery_retries_then_fails(c):
     for _ in range(notify.MAX_ATTEMPTS):
         notify.deliver(c, Bad())
     assert c.execute("SELECT status FROM notifications").fetchone()["status"] == "FAILED"
+
+
+# ---- death confirmation has the same safeguards as a hold
+def death_notice(c):
+    verified(c)
+    wf.propose(c, 1, "confirm_death", OFF, "registry match")
+    wf.decide(c, 1, SUP, True)
+
+
+def test_death_not_final_on_first_approval(c):
+    death_notice(c)
+    assert case(c)["payment_status"] == "ACTIVE" and tid(c)
+    from pim import notify
+    assert "death_notice_issued" in [r["template"] for r in notify.pending(c)]
+    with pytest.raises(WorkflowError):
+        wf.finalize_death(c, 1, SUP2)          # period has not ended, no override exists
+    with pytest.raises(WorkflowError):
+        wf.suspend(c, 1, SUP, "override")      # death notices are not suspended
+    with pytest.raises(WorkflowError):
+        wf.finalize_death(c, 1, OFF)           # wrong role
+
+
+def test_death_appeal_independent_review_and_reinstatement(c):
+    death_notice(c)
+    wf.file_appeal(c, tid(c), "he is alive")
+    assert case(c)["state"] == "APPEAL_REVIEW" and case(c)["payment_status"] == "PROVISIONALLY_RESTORED"
+    with pytest.raises(WorkflowError):
+        wf.resolve_appeal(c, 1, SUP, False, "alive")
+    wf.resolve_appeal(c, 1, SUP2, False, "alive, seen by visit")
+    assert case(c)["state"] == "RELEASED" and case(c)["payment_status"] == "ACTIVE"
+    kinds = [x["kind"] for x in c.execute("SELECT kind FROM reinstatement_requests ORDER BY id")]
+    assert kinds == ["PROVISIONAL", "FULL"]
+
+
+def test_death_appeal_upheld_goes_to_survivor_routing(c):
+    death_notice(c)
+    wf.file_appeal(c, tid(c), "x")
+    wf.resolve_appeal(c, 1, SUP2, True, "documents confirm the death")
+    assert case(c)["state"] == "SURVIVOR_ROUTING" and case(c)["payment_status"] == "STOP_DECEASED"
+
+
+def test_wrongly_declared_death_can_be_reopened(c):
+    death_notice(c)
+    expire_notice(c)
+    wf.finalize_death(c, 1, SUP2)
+    with pytest.raises(WorkflowError):
+        wf.reopen(c, 1, SUP, "mistake")        # approved the original, so cannot reopen
+    with pytest.raises(WorkflowError):
+        wf.reopen(c, 1, SUP2, "")              # needs a written reason
+    wf.reopen(c, 1, SUP2, "family shows the pensioner is alive")
+    assert case(c)["state"] == "APPEAL_REVIEW" and case(c)["payment_status"] == "PROVISIONALLY_RESTORED"
+    with pytest.raises(WorkflowError):
+        wf.resolve_appeal(c, 1, SUP2, False, "x")   # the reopener cannot also decide
+    wf.resolve_appeal(c, 1, Actor("sup3", "supervisor", ("NA",)), False, "alive confirmed")
+    assert case(c)["state"] == "RELEASED" and case(c)["outcome"] == "confirmed_alive"
+    assert c.execute("SELECT COUNT(*) FROM reinstatement_requests").fetchone()[0] == 2
+
+
+# ---- universal late-appeal denial
+def test_late_appeal_denied_for_every_kind_and_state(c):
+    to_notice(c)
+    c.execute("UPDATE cases SET appeal_deadline_at='2020-01-01T00:00:00Z' WHERE id=1")
+    with pytest.raises(WorkflowError):
+        wf.file_appeal(c, tid(c), "late")
+    assert case(c)["state"] == "NOTICE"
+    wf.suspend(c, 1, SUP, "override")             # a held case is denied just the same
+    with pytest.raises(WorkflowError):
+        wf.file_appeal(c, tid(c), "late")
+
+
+def test_missing_deadline_is_denied_not_allowed(c):
+    to_notice(c)
+    c.execute("UPDATE cases SET appeal_deadline_at=NULL WHERE id=1")
+    with pytest.raises(WorkflowError):
+        wf.file_appeal(c, tid(c), "x")
+
+
+def test_changing_the_setting_cannot_extend_an_issued_notice(c):
+    to_notice(c)
+    dl = case(c)["appeal_deadline_at"]
+    c.execute("UPDATE settings SET value='3650' WHERE key='appeal_window_days'")
+    c.execute("UPDATE cases SET appeal_deadline_at='2020-01-01T00:00:00Z' WHERE id=1")
+    with pytest.raises(WorkflowError):
+        wf.file_appeal(c, tid(c), "late")
+    assert dl and dl > "2026"
+
+
+def test_double_filing_is_single(c):
+    to_notice(c)
+    wf.file_appeal(c, tid(c), "one")
+    with pytest.raises(WorkflowError):
+        wf.file_appeal(c, tid(c), "two")
+    assert c.execute("SELECT COUNT(*) FROM reinstatement_requests").fetchone()[0] == 1

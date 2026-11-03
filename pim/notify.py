@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 """
 MAX_ATTEMPTS = 5
-TEMPLATES = ("notice_issued", "appeal_received", "appeal_reversed", "appeal_upheld", "otp")
+TEMPLATES = ("notice_issued", "death_notice_issued", "death_finalized", "appeal_received", "appeal_reversed", "appeal_upheld", "otp")
 
 
 def ensure(conn):

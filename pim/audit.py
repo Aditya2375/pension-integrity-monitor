@@ -18,7 +18,7 @@ ACTIONS = frozenset({
     "login", "login_failed", "start_review", "verify_step", "note", "dismiss", "auto_to_verification",
     "propose_hold", "propose_confirm_death", "approve_hold", "approve_death", "reject_hold",
     "reject_confirm_death", "suspend", "release", "appeal_filed", "appeal_upheld", "appeal_reversed",
-    "survivor_step", "survivor_routing_complete", "reinstatement_requested", "evidence_viewed",
+    "survivor_step", "survivor_routing_complete", "finalize_death", "reopen", "evidence_released", "reinstatement_requested", "evidence_viewed",
     "queue_export", "settings_changed", "session_revoked", "evidence_uploaded", "portal_code_requested", "user_created"})
 _DETAIL = re.compile(r"^([A-Z_]+>[A-Z_]+|(step|evidence)\d+(_done[01])?|PROVISIONAL|FULL|)$")
 

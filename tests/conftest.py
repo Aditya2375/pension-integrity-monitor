@@ -6,6 +6,7 @@ os.environ["PIM_LIMITER_DB"] = os.path.join(_d, "limits.sqlite3")
 os.environ["PIM_EVIDENCE_DIR"] = os.path.join(_d, "evidence")
 os.environ["PIM_INSECURE_HTTP"] = "1"
 os.environ["PIM_DEMO_SHOW_OTP"] = "1"
+os.environ["PIM_EVIDENCE_ENABLED"] = "1"
 os.environ["PIM_USERS"] = ("rev1:officer:TestState:reviewer-key-1;rev2:officer:TestState:reviewer-key-2;"
                            "sup1:supervisor:TestState:supervisor-key-1;sup2:supervisor:TestState:supervisor-key-2;"
                            "aud1:auditor:TestState:auditor-key-1;adm1:admin:TestState:admin-key-1;"
@@ -81,5 +82,7 @@ def make_png(w=2, h=2):
 
 
 def make_pdf():
-    return (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n"
-            b"xref\n0 3\n0000000000 65535 f \ntrailer\n<< /Root 1 0 R /Size 3 >>\nstartxref\n9\n%%EOF\n")
+    body = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n")
+    off = len(body)
+    return (body + b"xref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n"
+            b"trailer\n<< /Root 1 0 R /Size 3 >>\nstartxref\n" + str(off).encode() + b"\n%%EOF\n")

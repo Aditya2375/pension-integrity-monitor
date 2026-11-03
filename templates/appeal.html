@@ -8,7 +8,7 @@
   {% if err %}<div class="err" role="alert">{{ err }}</div>{% endif %}
   {% if info %}<div class="msg" role="status">{{ info }}</div>{% endif %}
   {% if submitted %}
-  <div class="msg" role="status">{{ t('msg_appeal_received', tracking_id=session.get('appeal_ok')) }}</div>
+  <div class="msg" role="status">{{ t('provisional_note') }}</div>
   {% endif %}
 
   {% if step == 'ref' %}
@@ -46,8 +46,10 @@
       <textarea id="st" name="statement" required maxlength="5000"></textarea>
       <label for="ct">{{ t('contact_label') }}</label>
       <input id="ct" type="text" name="contact" maxlength="200">
+      {% if evidence_enabled %}
       <label for="ev">{{ t('evidence_label') }}</label>
       <input id="ev" type="file" name="evidence" accept=".pdf,.jpg,.jpeg,.png">
+      {% else %}<p class="muted">Documents cannot be uploaded here. Take them to your pension office.</p>{% endif %}
       <p><button class="btn">{{ t('submit_appeal') }}</button></p>
     </form>
   {% elif r['status'] == 'OPEN' %}

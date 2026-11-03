@@ -167,6 +167,11 @@ def test_evidence_download_is_opaque(fresh_db):
     fam.post("/appeal", {"action": "check_code", "code": code}, csrf="/appeal")
     fam.post("/appeal", {"action": "appeal", "statement": "alive", "evidence": (io.BytesIO(make_png()), "a.png")},
              content_type="multipart/form-data", csrf="/appeal")
+    sup = as_user("sup1")
+    assert as_user("rev1").get("/evidence/1").status_code == 302          # quarantined: refused
+    assert sup.post("/evidence/1/release", {}).status_code == 302          # no attestation: stays quarantined
+    c = db.connect(); assert c.execute("SELECT status FROM appeal_evidence").fetchone()[0] == "QUARANTINED"; c.close()
+    sup.post("/evidence/1/release", {"attest": "1"})
     r = as_user("rev1").get("/evidence/1")
     assert r.headers["Content-Type"].startswith("application/octet-stream")
     assert "attachment" in r.headers["Content-Disposition"] and r.headers["X-Content-Type-Options"] == "nosniff"
