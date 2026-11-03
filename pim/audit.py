@@ -1,56 +1,44 @@
-"""Append-only, hash-chained audit trail.
+"""Thin adapter over security.audit (the reviewed hash-chained, append-only
+store). Events hold bounded identifiers only: actor, action code, object ref.
+Free-text reasons and notes live in their own tables, never in the chain.
 
-Each entry stores the SHA-256 of its own content plus the previous entry's
-hash. Editing or deleting any past row breaks the chain, and verify() reports
-the first broken row. SQLite triggers also refuse UPDATE and DELETE.
+A chain on its own does not stop a database administrator rewriting every
+row. Export checkpoints (seq, hash) with checkpoint() to an independent
+append-only store and pass them to verify().
 """
-import hashlib
-import json
-from datetime import datetime
+import re
+from security import audit as _sec
 
-DDL = """
-CREATE TABLE IF NOT EXISTS audit_chain (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts TEXT NOT NULL, actor TEXT NOT NULL, role TEXT, action TEXT NOT NULL,
-  case_id INTEGER, detail TEXT, prev_hash TEXT NOT NULL, hash TEXT NOT NULL
-);
-CREATE TRIGGER IF NOT EXISTS audit_chain_no_update BEFORE UPDATE ON audit_chain
-BEGIN SELECT RAISE(ABORT, 'audit trail is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS audit_chain_no_delete BEFORE DELETE ON audit_chain
-BEGIN SELECT RAISE(ABORT, 'audit trail is append-only'); END;
-"""
-GENESIS = "0" * 64
+_SAFE = re.compile(r"[^A-Za-z0-9_.:>=\-]")
+
+
+def _clean(value, fallback):
+    v = _SAFE.sub("", str(value or "").replace(" ", "_"))[:150]
+    return v or fallback
 
 
 def ensure(conn):
-    conn.executescript(DDL)
-
-
-def _digest(prev, ts, actor, role, action, case_id, detail):
-    body = json.dumps([prev, ts, actor, role, action, case_id, detail], ensure_ascii=False)
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+    _sec.initialize(conn)
 
 
 def append(conn, actor, action, case_id=None, detail="", role=None):
-    """Add one entry. The caller commits, so the entry lands in the same
-    transaction as the change it records."""
-    row = conn.execute("SELECT hash FROM audit_chain ORDER BY id DESC LIMIT 1").fetchone()
-    prev = row["hash"] if row else GENESIS
-    ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-    h = _digest(prev, ts, actor, role, action, case_id, detail)
-    conn.execute(
-        "INSERT INTO audit_chain(ts,actor,role,action,case_id,detail,prev_hash,hash) VALUES(?,?,?,?,?,?,?,?)",
-        (ts, actor, role, action, case_id, detail, prev, h))
-    return h
+    """detail must be a short code such as 'FLAGGED>VERIFICATION', not prose."""
+    code = _clean(action, "event") + (":" + _clean(detail, "") if detail else "")
+    ref = f"case:{int(case_id)}" if case_id is not None else "system"
+    return _sec.append(conn, _clean(actor, "unknown"), code[:200], ref)["event_hash"]
 
 
-def verify(conn):
-    """Return (ok, entries_checked, first_bad_id or None)."""
-    prev, n = GENESIS, 0
-    for r in conn.execute("SELECT * FROM audit_chain ORDER BY id"):
-        n += 1
-        expect = _digest(prev, r["ts"], r["actor"], r["role"], r["action"], r["case_id"], r["detail"])
-        if r["prev_hash"] != prev or r["hash"] != expect:
-            return False, n, r["id"]
-        prev = r["hash"]
-    return True, n, None
+def events(conn):
+    cur = conn.execute("SELECT seq,ts,actor,action,object_ref,prev_hash,event_hash FROM security_audit ORDER BY seq")
+    return [dict(zip(("seq", "ts", "actor", "action", "object_ref", "prev_hash", "event_hash"), r)) for r in cur]
+
+
+def checkpoint(conn):
+    """(seq, hash) of the latest entry, to store outside the database."""
+    row = conn.execute("SELECT seq,event_hash FROM security_audit ORDER BY seq DESC LIMIT 1").fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def verify(conn, cp=None):
+    ok, reason = _sec.verify(events(conn), cp)
+    return ok, reason

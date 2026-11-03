@@ -13,6 +13,7 @@ Rules enforced here (not in the routes), so every caller gets them:
 """
 from datetime import datetime, timedelta
 from . import audit
+from security import identity
 
 ROLES = ("officer", "supervisor", "auditor", "admin")
 
@@ -64,6 +65,11 @@ CREATE TABLE IF NOT EXISTS survivor_steps (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER NOT NULL, step TEXT NOT NULL,
   done INTEGER NOT NULL DEFAULT 0, note TEXT
 );
+CREATE TABLE IF NOT EXISTS reinstatement_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER NOT NULL, kind TEXT NOT NULL,
+  requested_at TEXT NOT NULL, requested_by TEXT NOT NULL, arrears_due REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'REQUESTED'
+);
 CREATE TABLE IF NOT EXISTS appeal_evidence (
   id INTEGER PRIMARY KEY AUTOINCREMENT, appeal_id INTEGER NOT NULL, ts TEXT NOT NULL,
   filename TEXT, mime TEXT, size INTEGER, sha256 TEXT, stored_path TEXT
@@ -72,7 +78,7 @@ CREATE TABLE IF NOT EXISTS appeal_evidence (
 CASE_COLUMNS = {
     "proposed_by": "TEXT", "approved_by": "TEXT", "notice_issued_at": "TEXT",
     "notice_due_at": "TEXT", "suspended_at": "TEXT", "restored_at": "TEXT",
-    "state_changed_at": "TEXT", "payment_status": "TEXT DEFAULT 'ACTIVE'", "review_reasons": "TEXT", "source_feed_refs": "TEXT",
+    "state_changed_at": "TEXT", "override_reason": "TEXT", "payment_status": "TEXT DEFAULT 'ACTIVE'", "review_reasons": "TEXT", "source_feed_refs": "TEXT",
 }
 
 
@@ -98,14 +104,30 @@ def ensure_schema(conn):
     conn.commit()
 
 
+# Portal role -> security.identity role. Authorization itself is delegated to
+# security.identity.authorized so there is one rule set.
+ROLE_MAP = {"officer": "reviewer", "supervisor": "approver", "auditor": "auditor", "admin": "ingestor"}
+
+
 class Actor:
-    def __init__(self, username, role):
+    """A server-owned identity (never built from a form or client header)."""
+    def __init__(self, username, role, jurisdictions=("NA",)):
         self.username, self.role = username, role
+        self.jurisdictions = frozenset(jurisdictions)
+
+    def principal(self):
+        r = ROLE_MAP.get(self.role)
+        return identity.Principal(self.username, frozenset([r] if r else []), self.jurisdictions)
 
 
-def _need(actor, *roles):
-    if actor.role not in roles:
-        raise WorkflowError(f"role '{actor.role}' cannot do this; needs {' or '.join(roles)}")
+def jurisdiction_of(conn, case):
+    r = conn.execute("SELECT state FROM pension_master WHERE pensioner_id=?", (case["pensioner_id"],)).fetchone()
+    return (r["state"] if r and r["state"] else "NA")
+
+
+def _need(conn, actor, action, case):
+    if not identity.authorized(actor.principal(), action, jurisdiction_of(conn, case)):
+        raise WorkflowError(f"'{actor.username}' ({actor.role}) is not authorised for {action} on this case")
 
 
 def _case(conn, cid):
@@ -125,12 +147,20 @@ def _move(conn, case, new, actor, action, detail="", **fields):
     # Payment status lives on the case, never on the source feed table.
     if new in PAYMENT_STATUS:
         conn.execute("UPDATE cases SET payment_status=? WHERE id=?", (PAYMENT_STATUS[new], case["id"]))
-    audit.append(conn, actor.username, action, case["id"], f"{old}->{new} {detail}".strip(), actor.role)
+    audit.append(conn, actor.username, action, case["id"], f"{old}>{new}", actor.role)
 
 
 def _setting_days(conn, key, default):
     r = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
     return int(r["value"]) if r else default
+
+
+def _request_reinstatement(conn, cid, kind, who, arrears):
+    """Record a request for the payment system to restore payment. This
+    system never moves money; the payer acts on the request and confirms."""
+    conn.execute("INSERT INTO reinstatement_requests(case_id,kind,requested_at,requested_by,arrears_due) VALUES(?,?,?,?,?)",
+                 (cid, kind, _now(), who, arrears))
+    audit.append(conn, who, "reinstatement_requested", cid, kind)
 
 
 def _arrears(conn, case, until):
@@ -145,25 +175,25 @@ def _arrears(conn, case, until):
 
 # ---- officer actions -----------------------------------------------------
 def start_review(conn, cid, actor):
-    _need(actor, "officer", "supervisor")
     c = _case(conn, cid)
+    _need(conn, actor, "verify", c)
     _move(conn, c, "UNDER_REVIEW", actor, "start_review")
 
 
 def add_note(conn, cid, actor, body):
-    _need(actor, "officer", "supervisor")
     body = (body or "").strip()
     if not body:
         raise WorkflowError("note is empty")
-    _case(conn, cid)
+    c = _case(conn, cid)
+    _need(conn, actor, "verify", c)
     conn.execute("INSERT INTO case_notes(case_id,ts,author,body) VALUES(?,?,?,?)",
                  (cid, _now(), actor.username, body[:4000]))
-    audit.append(conn, actor.username, "note", cid, f"{len(body)} chars", actor.role)
+    audit.append(conn, actor.username, "note", cid, "", actor.role)
 
 
 def complete_step(conn, cid, vid, done, note, actor):
-    _need(actor, "officer", "supervisor")
     c = _case(conn, cid)
+    _need(conn, actor, "verify", c)
     if c["state"] not in OPEN_STATES:
         raise WorkflowError("verification is closed for this case")
     conn.execute("UPDATE verifications SET done=?, note=? WHERE id=? AND case_id=?",
@@ -175,10 +205,10 @@ def complete_step(conn, cid, vid, done, note, actor):
 
 
 def dismiss(conn, cid, actor, note):
-    _need(actor, "officer", "supervisor")
     if not (note or "").strip():
         raise WorkflowError("a reason is required to dismiss")
     c = _case(conn, cid)
+    _need(conn, actor, "verify", c)
     _move(conn, c, "DISMISSED", actor, "dismiss", note[:200], outcome_note=note.strip())
 
 
@@ -190,13 +220,13 @@ def _steps_complete(conn, cid):
 def propose(conn, cid, kind, actor, reason):
     """kind: 'hold' or 'confirm_death'. Needs written reasons and every
     verification step done."""
-    _need(actor, "officer")
     if kind not in ("hold", "confirm_death"):
         raise WorkflowError("unknown proposal kind")
     reason = (reason or "").strip()
     if not reason:
         raise WorkflowError("written reasons are required")
     c = _case(conn, cid)
+    _need(conn, actor, "propose_decision", c)
     if c["state"] not in OPEN_STATES:
         raise WorkflowError(f"cannot propose from {c['state']}")
     if not _steps_complete(conn, cid):
@@ -219,8 +249,8 @@ def _pending(conn, cid):
 
 def decide(conn, cid, actor, approve, note=""):
     """Supervisor approves or rejects the pending proposal. Never the proposer."""
-    _need(actor, "supervisor")
     c = _case(conn, cid)
+    _need(conn, actor, "approve_decision", c)
     d = _pending(conn, cid)
     if d["proposer"] == actor.username:
         raise WorkflowError("the approver must be a different person from the proposer")
@@ -248,15 +278,16 @@ def decide(conn, cid, actor, approve, note=""):
 def suspend(conn, cid, actor, override_reason=""):
     """Start suspending payment once the notice period has run. A supervisor
     may shorten it only with a written, audited reason."""
-    _need(actor, "supervisor")
     c = _case(conn, cid)
+    _need(conn, actor, "approve_decision", c)
     if c["state"] != "NOTICE":
         raise WorkflowError("only a case in notice can be suspended")
     now = _now()
     if _parse(now) < _parse(c["notice_due_at"]) and not (override_reason or "").strip():
         raise WorkflowError(f"notice period runs until {c['notice_due_at']}; give a written reason to override")
     _move(conn, c, "HELD", actor, "suspend", f"override={override_reason[:200]}" if override_reason else "",
-          held_at=now, suspended_at=now)
+          held_at=now, suspended_at=now,
+          override_reason=(override_reason or "").strip()[:500] or None)
 
 
 def file_appeal(conn, cid, statement, contact=""):
@@ -268,17 +299,18 @@ def file_appeal(conn, cid, statement, contact=""):
     start = c["notice_issued_at"] or c["held_at"]
     if start and _parse(_now()) > _parse(start) + timedelta(days=window):
         raise WorkflowError("the appeal window for this case has closed")
-    actor = Actor("family", "family")
+    actor = Actor("appellant", "family")
     now = _now()
     arrears = _arrears(conn, c, now)
     conn.execute("UPDATE cases SET arrears=?, suspended_at=NULL, restored_at=? WHERE id=?", (arrears, now, cid))
     _move(conn, _case(conn, cid), "APPEAL_REVIEW", actor, "appeal_filed", "provisional restore")
+    _request_reinstatement(conn, cid, "PROVISIONAL", "appellant", arrears)
     return arrears
 
 
 def resolve_appeal(conn, cid, actor, uphold, note):
-    _need(actor, "supervisor")
     c = _case(conn, cid)
+    _need(conn, actor, "resolve_appeal", c)
     if c["state"] != "APPEAL_REVIEW":
         raise WorkflowError("case is not under appeal review")
     if actor.username in (c["proposed_by"], c["approved_by"]):
@@ -291,24 +323,26 @@ def resolve_appeal(conn, cid, actor, uphold, note):
     else:
         _move(conn, c, "RELEASED", actor, "appeal_reversed", note[:200], released_at=now,
               outcome="confirmed_alive", outcome_note=note.strip())
+        _request_reinstatement(conn, cid, "FULL", actor.username, float(c["arrears"] or 0))
 
 
 def release(conn, cid, actor, note):
     """Release a case in notice or held when the evidence clears the pensioner."""
-    _need(actor, "supervisor")
     if not (note or "").strip():
         raise WorkflowError("a reason is required to release")
     c = _case(conn, cid)
+    _need(conn, actor, "approve_decision", c)
     now = _now()
     arrears = _arrears(conn, c, now)
     _move(conn, c, "RELEASED", actor, "release", f"arrears={arrears}", released_at=now, arrears=arrears,
           suspended_at=None, outcome="confirmed_alive", outcome_note=note.strip())
+    _request_reinstatement(conn, cid, "FULL", actor.username, arrears)
     return arrears
 
 
 def complete_survivor_step(conn, cid, step_id, done, note, actor):
-    _need(actor, "officer", "supervisor")
     c = _case(conn, cid)
+    _need(conn, actor, "verify", c)
     if c["state"] != "SURVIVOR_ROUTING":
         raise WorkflowError("case is not in survivor routing")
     conn.execute("UPDATE survivor_steps SET done=?, note=? WHERE id=? AND case_id=?",

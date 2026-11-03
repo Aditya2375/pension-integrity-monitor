@@ -136,13 +136,38 @@ def test_reject_returns_to_verification(c):
 
 def test_audit_chain_detects_tampering(c):
     to_notice(c)
-    ok, n, bad = audit.verify(c)
-    assert ok and n > 3
+    ok, why = audit.verify(c)
+    assert ok
+    cp = audit.checkpoint(c)
     with pytest.raises(sqlite3.DatabaseError):
-        c.execute("UPDATE audit_chain SET actor='x' WHERE id=1")
+        c.execute("UPDATE security_audit SET actor='x' WHERE seq=1")
     with pytest.raises(sqlite3.DatabaseError):
-        c.execute("DELETE FROM audit_chain WHERE id=2")
-    c.execute("DROP TRIGGER audit_chain_no_update")
-    c.execute("UPDATE audit_chain SET detail='forged' WHERE id=2")
-    ok, _, bad = audit.verify(c)
-    assert not ok and bad == 2
+        c.execute("DELETE FROM security_audit WHERE seq=2")
+    c.execute("DROP TRIGGER no_audit_update")
+    c.execute("UPDATE security_audit SET action='forged' WHERE seq=2")
+    ok, why = audit.verify(c, cp)
+    assert not ok
+
+
+def test_audit_holds_no_free_text(c):
+    verified(c)
+    wf.propose(c, 1, "hold", OFF, "SECRET-REASON mother name 1234")
+    blob = " ".join(str(dict(e)) for e in audit.events(c))
+    assert "SECRET" not in blob and "1234" not in blob
+
+
+def test_reinstatement_is_a_request_not_a_payment(c):
+    to_notice(c)
+    wf.file_appeal(c, 1, "alive")
+    r = c.execute("SELECT kind,status FROM reinstatement_requests").fetchall()
+    assert [(x["kind"], x["status"]) for x in r] == [("PROVISIONAL", "REQUESTED")]
+    wf.resolve_appeal(c, 1, SUP2, False, "alive")
+    kinds = [x["kind"] for x in c.execute("SELECT kind FROM reinstatement_requests ORDER BY id")]
+    assert kinds == ["PROVISIONAL", "FULL"]
+
+
+def test_jurisdiction_scope(c):
+    c.execute("UPDATE pension_master SET state='KA'")
+    verified_actor = Actor("offx", "officer", ("MH",))
+    with pytest.raises(WorkflowError):
+        wf.complete_step(c, 1, 1, True, "", verified_actor)
