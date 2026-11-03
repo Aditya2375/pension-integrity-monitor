@@ -44,7 +44,9 @@ def test_limiter_shared_and_atomic(tmp_path):
         results = list(pool.map(lambda i: (a if i % 2 else b).allow('login:peer', 5, 60, now=120), range(20)))
     assert sum(results) == 5
     assert a.allow('login:peer', 5, 60, now=180)
-    assert not Limiter(str(tmp_path / 'other.db')).allow('x', 1, 60, now=120) is None
+    assert Limiter(str(tmp_path / 'other.db')).allow('x', 1, 60, now=120)
+    with pytest.raises(ValueError):
+        a.allow('x', 1, 86401, now=120)
 
 def test_chain_changes_truncation_and_rollback():
     c = sqlite3.connect(':memory:')

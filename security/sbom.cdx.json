@@ -3,6 +3,13 @@
   "components": [
     {
       "bom-ref": "pkg:pypi/blinker@1.9.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
       "name": "blinker",
       "purl": "pkg:pypi/blinker@1.9.0",
       "type": "library",
@@ -52,6 +59,13 @@
     },
     {
       "bom-ref": "pkg:pypi/itsdangerous@2.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
       "name": "itsdangerous",
       "purl": "pkg:pypi/itsdangerous@2.2.0",
       "type": "library",
@@ -59,6 +73,13 @@
     },
     {
       "bom-ref": "pkg:pypi/jinja2@3.1.6",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
       "name": "jinja2",
       "purl": "pkg:pypi/jinja2@3.1.6",
       "type": "library",

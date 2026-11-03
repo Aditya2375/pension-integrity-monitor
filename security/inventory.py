@@ -21,6 +21,10 @@ def main():
         ref = f'pkg:pypi/{name}@{dist.version}'
         license_id = metadata.get('License-Expression')
         legacy = metadata.get('License')
+        # Older distributions declare classifiers instead of an SPDX field.
+        # IDs below were also checked against their shipped licence text.
+        if not license_id and name in {'blinker', 'itsdangerous', 'jinja2'}:
+            license_id = {'blinker': 'MIT', 'itsdangerous': 'BSD-3-Clause', 'jinja2': 'BSD-3-Clause'}[name]
         licenses = ([{'license': {'id': license_id}}] if license_id else
                     [{'license': {'name': legacy}}] if legacy else [])
         components[name] = {'type': 'library', 'bom-ref': ref, 'name': name,
