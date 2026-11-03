@@ -23,7 +23,7 @@ def summarize(history,snapshot,window_days=30,baseline_days=120):
     for d in history.events:
         if not isinstance(d,date):raise ValueError('Invalid event date')
         if history.coverage_start<=d<=snapshot:events.append(d)
-    prior=[d for d in events if window_days<(snapshot-d).days<=baseline_days]
+    prior=[d for d in events if window_days<=(snapshot-d).days<baseline_days]
     recent=[d for d in events if 0<=(snapshot-d).days<window_days]
     exposure=baseline_days-window_days
     weekly=[]
