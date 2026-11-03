@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <h2>Case #{{ case['id'] }} - {{ case['name'] }} <span class="pill grey">{{ case['state'] }}</span></h2>
+  <p>
+    {{ case['pensioner_id'] }} &middot; {{ case['scheme'] }} &middot; {{ case['gender'] }} &middot; DoB {{ case['dob'] }}<br>
+    <span class="muted">{{ case['address'] or 'No address on record' }} &middot; Monthly pension {{ case['monthly_amount'] }} &middot; Last life certificate: {{ case['last_life_cert_date'] or 'none on record' }}</span>
+  </p>
+  <p>Calibrated probability: <span class="prob">{{ '%.1f%%'|format(case['probability'] * 100) }}</span>
+  (log-odds {{ case['log_odds'] }}, base rate {{ case['base_rate'] }})</p>
+  {% if case['state'] == 'HELD' %}
+  <p class="muted">Held {{ case['held_at'] }} with reasons: {{ case['hold_reasons'] }}<br>
+  Appeal deadline: <b>{{ deadline }}</b></p>
+  {% endif %}
+  {% if case['state'] == 'RELEASED' %}
+  <p class="muted">Released {{ case['released_at'] }} with full arrears of <b>{{ '%0.2f'|format(case['arrears']) }}</b>.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Signals</h2>
+  <table>
+    <tr><th>Signal</th><th>Present</th><th>Log-LR contribution</th></tr>
+    {% for s in sigs %}
+    <tr><td>{{ s['signal'].replace('_', ' ') }}</td><td>{{ 'yes' if s['present'] else 'no' }}</td><td>{{ s['value'] }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if match %}
+<div class="card">
+  <h2>Death-registry match</h2>
+  <table>
+    <tr><th>Registry name</th><th>Date of death</th><th>Registrar</th><th>Name match</th><th>Gender match</th><th>DoB</th><th>Identity score</th></tr>
+    <tr><td>{{ match['dname'] }}</td><td>{{ match['date_of_death'] }}</td><td>{{ match['registrar'] or '-' }}</td>
+    <td>{{ '%.0f%%'|format(match['name_pct'] * 100) }}</td><td>{{ 'yes' if match['gender_ok'] else 'no' }}</td>
+    <td>{{ match['dob_match'] }}</td><td class="prob">{{ '%.2f'|format(match['score']) }}</td></tr>
+  </table>
+</div>
+{% endif %}
+
+{% if case['state'] in ['FLAGGED','UNDER_REVIEW','VERIFICATION'] %}
+<div class="card">
+  <h2>Verification steps</h2>
+  <p class="muted">Every step must be completed before a hold is possible.</p>
+  {% for v in ver %}
+  <form method="post" action="{{ url_for('verify', cid=case['id']) }}" style="display:flex;gap:10px;align-items:center;margin:8px 0;flex-wrap:wrap">
+    <input type="hidden" name="vid" value="{{ v['id'] }}">
+    <input type="hidden" name="done" value="{{ 0 if v['done'] else 1 }}">
+    <span style="flex:1;min-width:260px">{{ '✔' if v['done'] else '○' }} {{ v['step'] }}{% if v['note'] %} <span class="muted">({{ v['note'] }})</span>{% endif %}</span>
+    <input type="text" name="note" placeholder="note" style="max-width:220px">
+    <button class="btn ghost">{{ 'Reopen' if v['done'] else 'Mark done' }}</button>
+  </form>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Officer decision</h2>
+  <h3>Hold the pension</h3>
+  <form method="post" action="{{ url_for('hold', cid=case['id']) }}">
+    <label>Written reasons (required; shared with the family on request)</label>
+    <textarea name="reasons" required></textarea>
+    <p><button class="btn warn">Hold with reasons</button></p>
+  </form>
+  <h3>Dismiss the flag</h3>
+  <form method="post" action="{{ url_for('dismiss', cid=case['id']) }}" style="display:flex;gap:10px;flex-wrap:wrap">
+    <input type="text" name="note" placeholder="why the flag is wrong" style="max-width:320px">
+    <button class="btn ghost">Dismiss</button>
+  </form>
+</div>
+{% endif %}
+
+{% if case['state'] == 'HELD' %}
+<div class="card">
+  <h2>Release</h2>
+  <p class="muted">Release restores the pension and pays full arrears for every day held.</p>
+  <form method="post" action="{{ url_for('release', cid=case['id']) }}"><button class="btn">Release with full arrears</button></form>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Verified outcome</h2>
+  <p class="muted">The verified outcome recalibrates signal weights for future cases.</p>
+  <form method="post" action="{{ url_for('outcome', cid=case['id']) }}" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+    <select name="outcome" style="max-width:220px">
+      <option value="confirmed_deceased">Confirmed deceased</option>
+      <option value="confirmed_alive">Confirmed alive</option>
+    </select>
+    <input type="text" name="note" placeholder="evidence note" style="max-width:320px">
+    <button class="btn">Record outcome</button>
+  </form>
+</div>
+
+{% if appeals %}
+<div class="card">
+  <h2>Appeal trail</h2>
+  <table>
+    <tr><th>Tracking ID</th><th>Submitted</th><th>Status</th><th>Statement</th></tr>
+    {% for a in appeals %}
+    <tr><td><code>{{ a['tracking_id'] }}</code></td><td>{{ a['submitted_at'] }}</td><td>{{ a['status'] }}</td><td>{{ a['statement'] }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

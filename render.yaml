@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: pension-integrity-monitor
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: PIM_OFFICER_KEY
+        generateValue: true
+      - key: PIM_SECRET
+        generateValue: true

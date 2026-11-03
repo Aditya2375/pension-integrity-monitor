@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block body %}
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+<div class="card">
+  <h2>Scoring settings</h2>
+  <p class="muted">Priority threshold from costs: p* = C(false hold) / (C(false hold) + C(missed death)) = <b>{{ '%.3f'|format(p_star) }}</b>. These govern ranking only.</p>
+  <form method="post">
+    <div class="grid">
+      <div><label>Base rate (annual unreported-death prevalence)</label><input type="text" name="base_rate" value="{{ s['base_rate'] }}"></div>
+      <div><label>Cost of a false hold</label><input type="text" name="cost_false_hold" value="{{ s['cost_false_hold'] }}"></div>
+      <div><label>Cost of a missed death</label><input type="text" name="cost_missed_death" value="{{ s['cost_missed_death'] }}"></div>
+      <div><label>Identity match threshold (0-1)</label><input type="text" name="match_threshold" value="{{ s['match_threshold'] }}"></div>
+      <div><label>Appeal window (days)</label><input type="text" name="appeal_window_days" value="{{ s['appeal_window_days'] }}"></div>
+      <div><label>Bank inactivity (months)</label><input type="text" name="bank_inactivity_months" value="{{ s['bank_inactivity_months'] }}"></div>
+      <div><label>Life certificate overdue (days)</label><input type="text" name="life_cert_overdue_days" value="{{ s['life_cert_overdue_days'] }}"></div>
+      <div><label>Old-age signal (years)</label><input type="text" name="old_age_years" value="{{ s['old_age_years'] }}"></div>
+    </div>
+    <h3>Signal likelihood ratios</h3>
+    <table>
+      <tr><th>Signal</th><th>LR+ (present)</th><th>LR- (absent)</th><th>Last updated</th></tr>
+      {% for w in weights %}
+      <tr>
+        <td>{{ w['signal'].replace('_', ' ') }}</td>
+        <td><input type="text" name="lp_{{ w['signal'] }}" value="{{ w['lr_plus'] }}"></td>
+        <td><input type="text" name="lm_{{ w['signal'] }}" value="{{ w['lr_minus'] }}"></td>
+        <td class="muted">{{ w['updated_at'] or 'default' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p style="margin-top:14px"><button class="btn">Save settings</button></p>
+  </form>
+</div>
+{% endblock %}

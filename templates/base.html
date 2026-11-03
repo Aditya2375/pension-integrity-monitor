@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Pension Integrity Monitor{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="top">
+  <h1>Pension Integrity Monitor</h1>
+  <nav>
+    <a href="{{ url_for('dashboard') }}">Dashboard</a>
+    {% if session.get('officer') %}
+    <a href="{{ url_for('ingest_page') }}">Ingestion</a>
+    <a href="{{ url_for('queue') }}">Review queue</a>
+    <a href="{{ url_for('appeals') }}">Appeals</a>
+    <a href="{{ url_for('health_page') }}">Feed health</a>
+    <a href="{{ url_for('feedback_page') }}">Feedback</a>
+    <a href="{{ url_for('context_page') }}">Public data</a>
+    <a href="{{ url_for('settings_page') }}">Settings</a>
+    <a href="{{ url_for('logout') }}">Log out</a>
+    {% else %}
+    <a href="{{ url_for('appeal_portal') }}">Family appeal portal</a>
+    <a href="{{ url_for('context_page') }}">Public data context</a>
+    <a href="{{ url_for('login') }}">Officer sign in</a>
+    {% endif %}
+  </nav>
+</header>
+<main>
+{% if request.args.get('msg') %}<div class="msg">{{ request.args.get('msg') }}</div>{% endif %}
+{% if request.args.get('err') %}<div class="err">{{ request.args.get('err') }}</div>{% endif %}
+{% block body %}{% endblock %}
+</main>
+<footer>Flags rank cases for human review only. This system never stops a pension by itself.</footer>
+</body>
+</html>

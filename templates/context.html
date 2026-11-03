@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Public data context{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>Public data context</h2>
+  <p class="muted">Real, published figures from government portals, public audits and press citations, each with its source and licence note. These are aggregate public statistics. They are not pension-roll records, they are not loaded into the flagging feeds, and they say nothing about this system's accuracy, which is unmeasured.</p>
+  <table>
+    <tr><th>Metric</th><th>Value</th><th>Region</th><th>Year</th><th>Source</th><th>Licence note</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r['metric'] }}</td>
+      <td><b>{{ r['value'] }}</b></td>
+      <td>{{ r['region'] }}</td>
+      <td>{{ r['year'] }}</td>
+      <td><a href="{{ r['source_url'] }}">{{ r['source_name'] }}</a></td>
+      <td class="muted">{{ r['licence'] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

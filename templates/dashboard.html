@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="grid">
+  <div class="stat"><div class="n">{{ counts.get('FLAGGED', 0) + counts.get('UNDER_REVIEW', 0) + counts.get('VERIFICATION', 0) }}</div><div class="l">Open cases in review</div></div>
+  <div class="stat"><div class="n">{{ counts.get('HELD', 0) }}</div><div class="l">Pensions on hold (with written reasons)</div></div>
+  <div class="stat"><div class="n">{{ counts.get('RELEASED', 0) }}</div><div class="l">Released with arrears</div></div>
+  <div class="stat"><div class="n">{{ stats.get('confirmed_deceased', 0) }}</div><div class="l">Confirmed deceased</div></div>
+  <div class="stat"><div class="n">{{ stats.get('confirmed_alive', 0) }}</div><div class="l">Confirmed alive</div></div>
+</div>
+
+<div class="card" style="margin-top:20px">
+  <h2>Highest-priority cases</h2>
+  {% if top %}
+  <table>
+    <tr><th>Case</th><th>Pensioner</th><th>Scheme</th><th>Probability</th><th>State</th><th></th></tr>
+    {% for c in top %}
+    <tr>
+      <td>#{{ c['id'] }}</td>
+      <td>{{ c['name'] }}</td>
+      <td>{{ c['scheme'] }}</td>
+      <td class="prob">{{ '%.1f%%'|format(c['probability'] * 100) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
+      <td>{{ c['state'] }}</td>
+      <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Open</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty"><b>No cases yet.</b><br>Load department feeds on the ingestion page and run the pipeline. Cases appear here ranked for officer review.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Feed status</h2>
+  <table>
+    <tr><th>Feed</th><th>Last ingest</th><th>Rows loaded</th><th>Rejected</th><th>State</th></tr>
+    {% for f in feeds %}
+    <tr>
+      <td>{{ f['name'] }}</td>
+      <td>{{ f['last_ingest_at'] or 'never' }}</td>
+      <td>{{ f['rows_loaded'] }}</td>
+      <td>{{ f['rows_rejected'] }}</td>
+      <td><span class="pill {{ 'ok' if f['state'] == 'ok' else ('warn' if f['state'] == 'stale' else 'grey') }}">{{ f['state'].replace('_', ' ') }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

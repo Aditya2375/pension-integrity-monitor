@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <h2>Feed health</h2>
+  <p class="muted">A feed older than its expected cadence is marked stale; scoring that depends on stale feeds should be treated with caution.</p>
+  <table>
+    <tr><th>Feed</th><th>Cadence</th><th>Last ingest</th><th>Age (days)</th><th>Loaded</th><th>Rejected</th><th>State</th></tr>
+    {% for f in feeds %}
+    <tr>
+      <td>{{ f['name'] }}</td><td>{{ f['cadence_days'] }}d</td>
+      <td>{{ f['last_ingest_at'] or 'never' }}</td><td>{{ f['age_days'] if f['age_days'] is not none else '-' }}</td>
+      <td>{{ f['rows_loaded'] }}</td><td>{{ f['rows_rejected'] }}</td>
+      <td><span class="pill {{ 'ok' if f['state'] == 'ok' else ('warn' if f['state'] == 'stale' else 'grey') }}">{{ f['state'].replace('_', ' ') }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <h2>Family appeals</h2>
+  {% if rows %}
+  <table>
+    <tr><th>Tracking ID</th><th>Pensioner</th><th>Submitted</th><th>Status</th><th>Statement</th><th>Resolve</th></tr>
+    {% for a in rows %}
+    <tr>
+      <td><code>{{ a['tracking_id'] }}</code></td>
+      <td>{{ a['name'] }}<br><span class="muted">{{ a['pensioner_id'] }}</span></td>
+      <td>{{ a['submitted_at'] }}</td>
+      <td>{{ a['status'] }}</td>
+      <td>{{ a['statement'] }}{% if a['decision'] %}<br><span class="muted">Decision: {{ a['decision'] }}</span>{% endif %}</td>
+      <td>
+        {% if a['status'] == 'OPEN' %}
+        <form method="post" action="{{ url_for('appeal_resolve', aid=a['id']) }}">
+          <input type="text" name="decision" placeholder="decision note" style="margin-bottom:6px">
+          <button class="btn" name="status" value="RELEASED">Uphold appeal, release</button>
+          <button class="btn ghost" name="status" value="UPHELD">Reject appeal</button>
+        </form>
+        {% else %}-{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty"><b>No appeals.</b><br>Appeals appear here when a family submits one from the public portal.</div>
+  {% endif %}
+</div>
+{% endblock %}

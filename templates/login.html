@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card" style="max-width:420px;margin:40px auto">
+  <h2>Officer sign in</h2>
+  {% if err %}<div class="err">{{ err }}</div>{% endif %}
+  <form method="post">
+    <label>Officer key</label>
+    <input type="password" name="key" autofocus>
+    <p style="margin-top:14px"><button class="btn">Sign in</button></p>
+  </form>
+  <p class="muted">Family members do not need to sign in. Use the <a href="{{ url_for('appeal_portal') }}">appeal portal</a> with your tracking ID.</p>
+</div>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <h2>Outcome feedback</h2>
+  <p class="muted">Confirmed outcomes recalibrate the signal likelihood ratios and the base rate (Laplace-smoothed). At least 5 resolved cases are required.</p>
+  <p>Confirmed deceased: <b>{{ stats.get('confirmed_deceased', 0) }}</b> &middot; Confirmed alive: <b>{{ stats.get('confirmed_alive', 0) }}</b></p>
+  <form method="post" action="{{ url_for('recalibrate') }}"><button class="btn">Recalibrate from outcomes</button></form>
+</div>
+<div class="card">
+  <h2>Current signal weights</h2>
+  <table>
+    <tr><th>Signal</th><th>LR+</th><th>LR-</th><th>Updated</th></tr>
+    {% for w in weights %}
+    <tr><td>{{ w['signal'].replace('_', ' ') }}</td><td>{{ w['lr_plus'] }}</td><td>{{ w['lr_minus'] }}</td><td class="muted">{{ w['updated_at'] or 'default' }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

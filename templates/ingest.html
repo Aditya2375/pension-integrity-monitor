@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <h2>Department feed ingestion</h2>
+  <p class="muted">Upload one CSV per feed. Each feed has a documented schema; download its template to see the exact headers. Rows missing required fields are rejected and counted. Nothing is fabricated: only the records you load enter the system.</p>
+</div>
+{% for f in feeds %}
+<div class="card">
+  <h3>{{ f['name'] }} <span class="pill {{ 'ok' if f['state'] == 'ok' else ('warn' if f['state'] == 'stale' else 'grey') }}">{{ f['state'].replace('_', ' ') }}</span></h3>
+  <p class="muted">{{ schemas[f['feed_id']]['help'] }}<br>
+  Required: <code>{{ schemas[f['feed_id']]['required']|join(', ') }}</code>
+  {% if schemas[f['feed_id']]['optional'] %} &middot; Optional: <code>{{ schemas[f['feed_id']]['optional']|join(', ') }}</code>{% endif %}<br>
+  Cadence: every {{ f['cadence_days'] }} days &middot; Last ingest: {{ f['last_ingest_at'] or 'never' }} &middot; Loaded {{ f['rows_loaded'] }}, rejected {{ f['rows_rejected'] }}</p>
+  <form method="post" action="{{ url_for('ingest_upload', feed_id=f['feed_id']) }}" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <input type="file" name="file" accept=".csv" required style="max-width:320px">
+    <button class="btn">Upload</button>
+    <a class="btn ghost" href="{{ url_for('template', feed_id=f['feed_id']) }}">Download template</a>
+  </form>
+</div>
+{% endfor %}
+<div class="card">
+  <h2>Run the flag pipeline</h2>
+  <p class="muted">Matches the death registry against the active roll, assembles signals, scores each pensioner and rebuilds the review queue. Flags only rank cases; no pension is held automatically.</p>
+  <form method="post" action="{{ url_for('run_pipeline') }}"><button class="btn">Run pipeline</button></form>
+</div>
+{% endblock %}

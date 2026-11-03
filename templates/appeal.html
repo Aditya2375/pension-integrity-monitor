@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Family appeal portal{% endblock %}
+{% block body %}
+<div class="card" style="max-width:640px;margin:0 auto">
+  <h2>Family appeal portal</h2>
+  {% if submitted %}
+  <div class="msg">Your appeal has been submitted. The department will review it and update the status against your tracking ID.</div>
+  {% endif %}
+  {% if err %}<div class="err">{{ err }}</div>{% endif %}
+  <p class="muted">If a pension has been held, the hold notice carries a tracking ID. Enter it to see the case status and the appeal deadline, and to submit an appeal. No sign-in is needed.</p>
+  <form method="post">
+    <label>Tracking ID</label>
+    <input type="text" name="tracking_id" value="{{ request.form.get('tracking_id', '') }}" required>
+    {% if found %}
+    <h3 style="margin-top:16px">Case status</h3>
+    <p>State: <b>{{ found['state'] }}</b> &middot; Scheme: {{ found['scheme'] }}<br>
+    Appeal deadline: <b>{{ deadline or 'n/a' }}</b></p>
+    <label>Your appeal</label>
+    <textarea name="statement" placeholder="Explain why the pensioner is alive; mention any documents you can produce."></textarea>
+    <label>Contact (phone or email, optional)</label>
+    <input type="text" name="contact">
+    <p><button class="btn">Submit appeal</button></p>
+    {% else %}
+    <p><button class="btn">Look up</button></p>
+    {% endif %}
+  </form>
+</div>
+{% endblock %}
