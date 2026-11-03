@@ -13,4 +13,4 @@ with open(os.path.join(dataset,'flagged_pensioners.csv'),'w',newline='') as f:
  w=csv.writer(f);w.writerow(['pensioner_id','score']);w.writerows((pid,round(float(score),8)) for pid,score in rows)
 with open(os.path.join(dataset,'reasoning.txt'),'w') as f:
  f.write('Frozen classifier uses documentary reconciliation, identity match quality, personal activity cessation, household activity, life-certificate history and payment continuation. Scores rank review candidates, never authorize payment cancellation. Operating threshold: 0.5. Development-trained model; independent validation required. No truth file is read by this program.\n')
-print(json.dumps({'records':len(rows),'review_candidates':sum(s>=threshold for _,s in rows),'threshold':threshold}))
+print(json.dumps({'records':len(rows),'review_candidates':int(sum(s>=threshold for _,s in rows)),'threshold':threshold}))
