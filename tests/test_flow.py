@@ -2,6 +2,7 @@ import os, sys, tempfile, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 os.environ["PIM_DB"] = tempfile.mktemp(suffix=".sqlite3")
 os.environ.setdefault("PIM_OFFICER_KEY", "officer")
+os.environ.setdefault("PIM_INSECURE_HTTP", "1")
 
 import app as app_module
 from pim import db, health
@@ -17,6 +18,9 @@ def login(c):
 
 def test_end_to_end():
     c = client()
+    r = c.get("/")
+    assert r.status_code == 302  # dashboard is officer-only; redirects to login
+    login(c)
     r = c.get("/")
     assert r.status_code == 200
 

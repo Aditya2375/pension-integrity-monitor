@@ -45,7 +45,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open http://localhost:5000. Officer sign-in key defaults to `officer`; set `PIM_OFFICER_KEY` in production and `PIM_SECRET` for session signing. The family appeal portal at `/appeal` needs no sign-in.
+Open http://localhost:5000. Officer sign-in requires the `PIM_OFFICER_KEY` environment variable; with no key set, officer pages stay closed. `PIM_SECRET` signs sessions (a random per-boot key is used when unset, which invalidates sessions on restart). On plain HTTP for local development only, set `PIM_INSECURE_HTTP=1` so the session cookie is not marked Secure. The family appeal portal at `/appeal` needs no sign-in.
 
 Run the end-to-end test suite (uses its own throwaway fixtures in `tests/fixtures`, never loaded into the app):
 

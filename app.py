@@ -1,12 +1,47 @@
-import os, secrets, string
+import os, secrets, string, threading, time
 from datetime import datetime, timedelta
 from flask import (Flask, request, redirect, url_for, render_template,
                    session, abort, Response)
 from pim import db, ingest, pipeline, feedback, health, scoring
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("PIM_SECRET", "dev-secret-change-me")
-OFFICER_KEY = os.environ.get("PIM_OFFICER_KEY", "officer")
+# Session signing key: from the environment in every real deployment. When it
+# is absent (local demo), fall back to a per-boot random key (existing sessions
+# invalidate on restart) instead of shipping a hardcoded secret.
+app.secret_key = os.environ.get("PIM_SECRET") or secrets.token_hex(32)
+# Officer key: no default. If it is not configured, officer sign-in stays closed.
+OFFICER_KEY = os.environ.get("PIM_OFFICER_KEY")
+app.config.update(
+    SESSION_COOKIE_SECURE=os.environ.get("PIM_INSECURE_HTTP") != "1",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+    MAX_CONTENT_LENGTH=300 * 1024 * 1024,  # feed uploads stream; this caps disk abuse
+)
+
+_LOCK = threading.Lock()
+_ATTEMPTS = {}  # ip -> list of failure timestamps (sliding window)
+
+def _throttled(ip, limit, window_s):
+    now = time.time()
+    with _LOCK:
+        arr = [t for t in _ATTEMPTS.get(ip, []) if now - t < window_s]
+        _ATTEMPTS[ip] = arr
+        return len(arr) >= limit
+
+def _record_fail(ip):
+    with _LOCK:
+        _ATTEMPTS.setdefault(ip, []).append(time.time())
+
+@app.after_request
+def security_headers(resp):
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+    if request.scheme == "https":
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return resp
 
 with app.app_context():
     db.init_db()
@@ -22,11 +57,23 @@ def officer_required():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     err = None
+    if OFFICER_KEY is None:
+        return render_template("login.html", err="Officer sign-in is not configured on this deployment.")
     if request.method == "POST":
-        if request.form.get("key") == OFFICER_KEY:
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?").split(",")[0].strip()
+        if _throttled(ip, 5, 900):
+            err = "Too many attempts. Try again in 15 minutes."
+        elif secrets.compare_digest(request.form.get("key") or "", OFFICER_KEY):
+            session.clear()
             session["officer"] = True
-            return redirect(request.args.get("next") or url_for("dashboard"))
-        err = "Wrong key."
+            session.permanent = True
+            nxt = request.args.get("next") or ""
+            if not nxt.startswith("/") or nxt.startswith("//"):
+                nxt = ""
+            return redirect(nxt or url_for("dashboard"))
+        else:
+            _record_fail(ip)
+            err = "Wrong key."
     return render_template("login.html", err=err)
 
 @app.route("/logout")
@@ -36,6 +83,8 @@ def logout():
 
 @app.route("/")
 def dashboard():
+    r = officer_required()
+    if r: return r
     c = conn()
     counts = {r["state"]: r["n"] for r in
               c.execute("SELECT state, COUNT(*) n FROM cases GROUP BY state")}
@@ -65,8 +114,8 @@ def ingest_upload(feed_id):
     if feed_id not in ingest.FEED_SCHEMAS:
         abort(404)
     f = request.files.get("file")
-    if not f:
-        return redirect(url_for("ingest_page"))
+    if not f or not (f.filename or "").lower().endswith(".csv"):
+        return redirect(url_for("ingest_page", msg="Upload a .csv file."))
     c = conn()
     try:
         loaded, rejected = ingest.ingest_csv_stream(c, feed_id, ingest.iter_text(f.stream))
@@ -241,11 +290,17 @@ def outcome(cid):
 def queue_export():
     r = officer_required()
     if r: return r
-    import io, tempfile
+    import tempfile, os as _os
     from scripts.export_flags import export, SIGNALS
-    path = tempfile.mktemp(suffix=".csv")
-    export(path)
-    return Response(open(path).read(), mimetype="text/csv",
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    _os.close(fd)
+    try:
+        export(path)
+        with open(path) as fh:
+            body = fh.read()
+    finally:
+        _os.unlink(path)
+    return Response(body, mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=ranked_flags.csv"})
 
 @app.route("/appeals")
@@ -264,7 +319,7 @@ def appeals():
 def appeal_resolve(aid):
     r = officer_required()
     if r: return r
-    decision = (request.form.get("decision") or "").strip()
+    decision = (request.form.get("decision") or "").strip()[:2000]
     status = request.form.get("status")
     if status not in ("UPHELD", "RELEASED"):
         abort(400)
@@ -281,7 +336,12 @@ def appeal_portal():
     c = conn()
     found, err = None, None
     if request.method == "POST":
-        tid = (request.form.get("tracking_id") or "").strip().upper()
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?").split(",")[0].strip()
+        if _throttled(ip, 20, 60):
+            c.close()
+            return render_template("appeal.html", err="Too many attempts. Please wait a minute and try again.", found=None, deadline=None, submitted=False)
+        _record_fail(ip)
+        tid = (request.form.get("tracking_id") or "").strip().upper()[:20]
         row = c.execute(
             "SELECT appeals.*, cases.held_at, cases.state, pension_master.scheme_code AS scheme FROM appeals "
             "JOIN cases ON appeals.case_id=cases.id JOIN pension_master USING(pensioner_id) "
@@ -298,7 +358,7 @@ def appeal_portal():
                     "INSERT INTO appeals(tracking_id,case_id,submitted_at,statement,contact,status) "
                     "VALUES(?,?,?,?,?, 'OPEN')",
                     (_tracking_id(), row["case_id"], datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                     request.form["statement"].strip(), request.form.get("contact", ""),))
+                     request.form["statement"].strip()[:5000], request.form.get("contact", "")[:200],))
                 db.log(c, "family", "appeal_submit", f"case={row['case_id']} via={tid}")
                 c.commit()
                 c.close()
