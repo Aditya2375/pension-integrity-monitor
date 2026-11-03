@@ -9,6 +9,7 @@ PIM_USERS format: name:role:JUR1|JUR2:key;name2:role:JUR:key2
 import hashlib
 import hmac
 import os
+import re
 import secrets
 from . import workflow
 
@@ -20,7 +21,9 @@ def _hash(key, salt):
 def create(conn, username, role, key, jurisdictions=("NA",)):
     if role not in workflow.ROLES:
         raise ValueError("unknown role")
-    if not username or len(key) < 8:
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,64}", username or ""):
+        raise ValueError("username may use letters, digits, dot, dash and underscore only (max 64)")
+    if len(key) < 8:
         raise ValueError("username required and key must be at least 8 characters")
     salt = secrets.token_hex(16)
     conn.execute("INSERT OR REPLACE INTO users(username,role,salt,key_hash,active,jurisdictions) VALUES(?,?,?,?,1,?)",
@@ -47,3 +50,11 @@ def bootstrap_from_env(conn):
             n += 1
     conn.commit()
     return n
+
+
+def get(conn, username):
+    """Current, active user as an Actor, or None. Read fresh on every request."""
+    r = conn.execute("SELECT * FROM users WHERE username=? AND active=1", (username or "",)).fetchone()
+    if not r:
+        return None
+    return workflow.Actor(r["username"], r["role"], tuple(filter(None, (r["jurisdictions"] or "").split("|"))))

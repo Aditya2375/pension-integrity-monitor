@@ -1,8 +1,8 @@
 import csv, hashlib, io, os, secrets, tempfile, uuid
 from datetime import datetime, timedelta
 from flask import (Flask, request, redirect, url_for, render_template,
-                   session, abort, Response, send_file)
-from pim import db, ingest, pipeline, feedback, health, scoring, workflow as wf, audit, users, notify, otp, i18n
+                   session, abort, Response, send_file, g)
+from pim import db, ingest, pipeline, feedback, health, scoring, workflow as wf, audit, users, notify, otp, i18n, evidence
 from pim.workflow import Actor, WorkflowError
 from security.web import install_csrf, client_ip, csv_cell
 from security.limiter import Limiter
@@ -23,9 +23,7 @@ install_csrf(app)
 TRUSTED_PROXIES = tuple(x.strip() for x in os.environ.get("PIM_TRUSTED_PROXIES", "").split(",") if x.strip())
 DEMO_SHOW_OTP = os.environ.get("PIM_DEMO_SHOW_OTP") == "1"   # synthetic demo only
 EVIDENCE_DIR = os.environ.get("PIM_EVIDENCE_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "evidence"))
-EVIDENCE_MAX = 5 * 1024 * 1024
-EVIDENCE_TYPES = {b"%PDF-": ("pdf", "application/pdf"), b"\xff\xd8\xff": ("jpg", "image/jpeg"),
-                  b"\x89PNG\r\n\x1a\n": ("png", "image/png")}
+app.config["NOTIFY_ADAPTER"] = None   # set by the integration lane; None means nothing is ever sent
 _limiter = None
 
 
@@ -70,9 +68,26 @@ def conn():
 READ_ROLES = ("officer", "supervisor", "auditor", "admin")
 
 def current_actor():
-    if not session.get("user"):
-        return None
-    return Actor(session["user"], session["role"], tuple(session.get("juris") or ("NA",)))
+    """The signed-in user, re-read from the users table on every request, so a
+    disabled account or changed role or jurisdiction takes effect at once. The
+    session holds only the username."""
+    if "actor" in g:
+        return g.actor
+    actor = None
+    name = session.get("user")
+    if name:
+        c = conn()
+        try:
+            actor = users.get(c, name)
+            if actor is None:
+                audit.append(c, "system", "session_revoked", None, "", None)
+                c.commit()
+        finally:
+            c.close()
+        if actor is None:
+            session.clear()
+    g.actor = actor
+    return actor
 
 def guard(*roles):
     """None when the signed-in user may proceed, else a redirect or 403."""
@@ -114,7 +129,7 @@ def login():
             c.close()
             if actor:
                 session.clear()   # new session and CSRF token after authentication
-                session.update(user=actor.username, role=actor.role, juris=sorted(actor.jurisdictions))
+                session.update(user=actor.username)
                 session.permanent = True
                 nxt = request.args.get("next") or ""
                 if not nxt.startswith("/") or nxt.startswith("//"):
@@ -132,15 +147,18 @@ def logout():
 def dashboard():
     r = officer_required()
     if r: return r
+    me = current_actor()
+    frag, params = scope_sql(me)
     c = conn()
-    counts = {r["state"]: r["n"] for r in
-              c.execute("SELECT state, COUNT(*) n FROM cases GROUP BY state")}
+    counts = {r["state"]: r["n"] for r in c.execute(
+        f"SELECT cases.state AS state, COUNT(*) n FROM cases JOIN pension_master USING(pensioner_id) WHERE {frag} GROUP BY cases.state", params)}
     top = c.execute(
         "SELECT cases.*, pension_master.full_name AS name, pension_master.scheme_code AS scheme FROM cases "
         "JOIN pension_master USING(pensioner_id) WHERE cases.state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION') "
-        "ORDER BY probability DESC LIMIT 10").fetchall()
+        f"AND {frag} ORDER BY probability DESC LIMIT 10", params).fetchall()
     fh = health.feed_health(c)
-    stats = feedback.stats(c)
+    stats = {r["outcome"]: r["n"] for r in c.execute(
+        f"SELECT cases.outcome AS outcome, COUNT(*) n FROM cases JOIN pension_master USING(pensioner_id) WHERE cases.outcome IS NOT NULL AND {frag} GROUP BY cases.outcome", params)}
     c.close()
     return render_template("dashboard.html", counts=counts, top=top, feeds=fh, stats=stats)
 
@@ -202,6 +220,14 @@ def _case_row(c, cid):
         abort(404)   # outside this user's jurisdiction: not found, not forbidden
     return case
 
+def scope_sql(me):
+    """SQL fragment limiting a query that joins pension_master to the user's
+    jurisdictions. Every case-level read goes through this or _case_row."""
+    js = sorted(me.jurisdictions)
+    if not js:
+        return "0", []
+    return "COALESCE(pension_master.state,'NA') IN (%s)" % ",".join("?" * len(js)), js
+
 def _mask(v, keep=4):
     v = str(v or "")
     return ("*" * max(len(v) - keep, 0)) + v[-keep:] if v else ""
@@ -212,14 +238,14 @@ def queue():
     if r: return r
     me = current_actor()
     f_state = request.args.get("state", "")
+    frag, params = scope_sql(me)
     c = conn()
     rows = c.execute(
         "SELECT cases.*, pension_master.full_name AS name, pension_master.scheme_code AS scheme, pension_master.monthly_amount, "
         "pension_master.state AS juris FROM cases JOIN pension_master USING(pensioner_id) "
-        "WHERE cases.state NOT IN ('RELEASED','DISMISSED','CLOSED_CONFIRMED') "
-        "ORDER BY priority DESC, probability DESC").fetchall()
-    rows = [dict(r, sla=wf.sla_status(r)) for r in rows if (r["juris"] or "NA") in me.jurisdictions
-            and (not f_state or r["state"] == f_state)]
+        "WHERE cases.state NOT IN ('RELEASED','DISMISSED','CLOSED_CONFIRMED') AND " + frag +
+        " ORDER BY priority DESC, probability DESC", params).fetchall()
+    rows = [dict(r, sla=wf.sla_status(r)) for r in rows if not f_state or r["state"] == f_state]
     states = sorted({r["state"] for r in rows} | ({f_state} if f_state else set()))
     p_star = scoring.cost_threshold(float(db.get_setting(c, "cost_false_hold")),
                                     float(db.get_setting(c, "cost_missed_death")))
@@ -245,12 +271,13 @@ def case_detail(cid):
     notes = c.execute("SELECT * FROM case_notes WHERE case_id=? ORDER BY id", (cid,)).fetchall()
     survivor = c.execute("SELECT * FROM survivor_steps WHERE case_id=?", (cid,)).fetchall()
     reinst = c.execute("SELECT * FROM reinstatement_requests WHERE case_id=? ORDER BY id", (cid,)).fetchall()
+    outbox = c.execute("SELECT id,template,status,attempts,created_at,last_error FROM notifications WHERE case_id=? ORDER BY id", (cid,)).fetchall()
     trail = [e for e in audit.events(c) if e["object_ref"] == f"case:{cid}"]
     pending = next((d for d in decisions if d["status"] == "PENDING"), None)
     c.close()
     return render_template("case.html", case=case, sigs=sigs, ver=ver, match=match, appeals=appeals,
                            evidence=evidence, decisions=decisions, notes=notes, survivor=survivor,
-                           reinst=reinst, trail=trail, pending=pending, me=current_actor(), mask=_mask,
+                           reinst=reinst, outbox=outbox, delivery_ready=bool(app.config.get('NOTIFY_ADAPTER')), trail=trail, pending=pending, me=current_actor(), mask=_mask,
                            sla=wf.sla_status(case))
 
 def _act(cid, fn, ok_msg, roles=("officer", "supervisor")):
@@ -292,22 +319,27 @@ def case_propose(cid):
     return _act(cid, lambda c, a: wf.propose(c, cid, kind, a, request.form.get("reason")),
                 "Sent to a supervisor for second approval. Nothing changes for the pensioner yet.", ("officer",))
 
+def _delivery_note():
+    return ("Delivery is handled by the connected message service; check the status below."
+            if app.config.get("NOTIFY_ADAPTER") else
+            "No message service is connected on this system, so nothing has been sent. Give the family their reference another way.")
+
 @app.route("/case/<int:cid>/decide", methods=["POST"])
 def case_decide(cid):
     approve = request.form.get("verdict") == "approve"
     return _act(cid, lambda c, a: wf.decide(c, cid, a, approve, request.form.get("note", "")),
-                "Approved. The family has been sent a notice and payment continues during the notice period." if approve else "Proposal sent back to the officer.",
+                ("Approved. A notice for the family is queued. " + _delivery_note() + " Payment continues during the notice period.") if approve else "Proposal sent back to the officer.",
                 ("supervisor",))
 
 @app.route("/case/<int:cid>/suspend", methods=["POST"])
 def case_suspend(cid):
     return _act(cid, lambda c, a: wf.suspend(c, cid, a, request.form.get("override_reason", "")),
-                "Payment suspension recommended to the payment system.", ("supervisor",))
+                "Suspension recorded as a recommendation for the payment system. This system does not stop payments itself.", ("supervisor",))
 
 @app.route("/case/<int:cid>/release", methods=["POST"])
 def release(cid):
     return _act(cid, lambda c, a: wf.release(c, cid, a, request.form.get("note")),
-                lambda arrears: f"Released. A reinstatement request was recorded; arrears due {arrears:,.2f} (the payer confirms payment).",
+                lambda arrears: f"Released. A reinstatement request was recorded; arrears due {arrears:,.2f}. This system does not pay: the payer confirms payment.",
                 ("supervisor",))
 
 @app.route("/case/<int:cid>/dismiss", methods=["POST"])
@@ -331,12 +363,12 @@ def appeals():
     r = guard(*READ_ROLES)
     if r: return r
     me = current_actor()
+    frag, params = scope_sql(me)
     c = conn()
     rows = c.execute(
         "SELECT appeals.*, cases.pensioner_id, cases.state AS case_state, pension_master.full_name AS name, "
         "pension_master.state AS juris FROM appeals JOIN cases ON appeals.case_id=cases.id "
-        "JOIN pension_master USING(pensioner_id) ORDER BY appeals.id DESC").fetchall()
-    rows = [r for r in rows if (r["juris"] or "NA") in me.jurisdictions]
+        "JOIN pension_master USING(pensioner_id) WHERE " + frag + " ORDER BY appeals.id DESC", params).fetchall()
     c.close()
     return render_template("appeals.html", rows=rows)
 
@@ -351,25 +383,27 @@ def evidence_file(eid):
     _case_row(c, e["case_id"])
     audit.append(c, current_actor().username, "evidence_viewed", e["case_id"], f"evidence{eid}", current_actor().role)
     c.commit(); c.close()
-    return send_file(e["stored_path"], mimetype=e["mime"], as_attachment=True, download_name=f"evidence-{eid}." + e["mime"].split("/")[-1].replace("jpeg", "jpg"))
+    ext = {"application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg"}.get(e["mime"], "bin")
+    resp = send_file(e["stored_path"], mimetype="application/octet-stream", as_attachment=True, download_name=f"evidence-{eid}.{ext}")
+    resp.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+    return resp
 
 # ---- public family portal ---------------------------------------------------
 def _store_evidence(c, appeal_id, f):
-    """Validate by content, not by name; keep under a random name."""
-    if not f or not f.filename:
+    """Parse the file (not just its first bytes), then keep it in the private
+    quarantine area. Raises WorkflowError with a plain message on any problem."""
+    if not f or not getattr(f, "filename", ""):
         return None
-    data = f.stream.read(EVIDENCE_MAX + 1)
-    if len(data) > EVIDENCE_MAX:
-        raise WorkflowError("The file is larger than 5 MB.")
-    kind = next((v for sig, v in EVIDENCE_TYPES.items() if data.startswith(sig)), None)
-    if not kind:
-        raise WorkflowError("Only PDF, JPG or PNG files are accepted.")
-    os.makedirs(EVIDENCE_DIR, exist_ok=True)
-    path = os.path.join(EVIDENCE_DIR, uuid.uuid4().hex + "." + kind[0])
-    with open(path, "wb") as fh:
-        fh.write(data)
-    c.execute("INSERT INTO appeal_evidence(appeal_id,ts,filename,mime,size,sha256,stored_path) VALUES(?,?,?,?,?,?,?)",
-              (appeal_id, wf._now(), "upload." + kind[0], kind[1], len(data), hashlib.sha256(data).hexdigest(), path))
+    data = f.stream.read(evidence.MAX_BYTES + 1)
+    try:
+        ext, mime = evidence.validate(data)
+    except evidence.EvidenceError as e:
+        raise WorkflowError(str(e))
+    path = evidence.store(EVIDENCE_DIR, data, ext)
+    cur = c.execute("INSERT INTO appeal_evidence(appeal_id,ts,filename,mime,size,sha256,stored_path,status) VALUES(?,?,?,?,?,?,?,'QUARANTINED')",
+                    (appeal_id, wf._now(), "upload." + ext, mime, len(data), hashlib.sha256(data).hexdigest(), path))
+    case_id = c.execute("SELECT case_id FROM appeals WHERE id=?", (appeal_id,)).fetchone()["case_id"]
+    audit.append(c, "appellant", "evidence_uploaded", case_id, f"evidence{cur.lastrowid}", "family")
 
 def _portal_ctx(c, tid, L):
     row = c.execute("SELECT appeals.*, cases.state, cases.notice_issued_at, cases.held_at, cases.payment_status, cases.id AS cid "
@@ -385,7 +419,7 @@ def _portal_ctx(c, tid, L):
 def appeal_portal():
     L = lang()
     verified = session.get("appeal_ok")
-    ctx = dict(L=L, t=lambda k, **kw: i18n.t(k, L, **kw), langs=i18n.LANGS, step="ref", err=None, info=None,
+    ctx = dict(delivery_ready=bool(app.config.get("NOTIFY_ADAPTER")), L=L, t=lambda k, **kw: i18n.t(k, L, **kw), langs=i18n.LANGS, step="ref", err=None, info=None,
                demo_code=None, found=None, submitted=False)
     c = conn()
     try:
@@ -397,11 +431,17 @@ def appeal_portal():
                 tid = (request.form.get("tracking_id") or "").strip().upper()[:20]
                 if allow("otp-ref", tid, 3, 600):
                     code = otp.issue(c, tid, L)
+                    if code:
+                        cid_ = c.execute("SELECT case_id FROM appeals WHERE tracking_id=?", (tid,)).fetchone()["case_id"]
+                        audit.append(c, "appellant", "portal_code_requested", cid_, "", "family")
                     c.commit()
                     if code and DEMO_SHOW_OTP:
                         ctx["demo_code"] = code
                 session["appeal_pending"] = tid
-                ctx.update(step="code", info="If that reference is valid, a code has been sent to the contact on record.")
+                ctx.update(step="code", info=(
+                    "If that reference is valid, a code has been queued for the contact on record. It can take a few minutes to arrive."
+                    if app.config.get("NOTIFY_ADAPTER") else
+                    "If that reference is valid, a code has been queued. This system has no message service connected, so it cannot be delivered here. Please ask your pension office."))
             elif action == "check_code":
                 tid = session.get("appeal_pending", "")
                 ok = bool(tid) and allow("otp-try", tid, 8, 900) and otp.check(c, tid, request.form.get("code"))
@@ -431,31 +471,34 @@ def appeal_portal():
         c.close()
     return render_template("appeal.html", **ctx)
 
+EXPORT_SIGNALS = ["death_registry_match", "hospital_died_match", "electoral_deletion", "bank_cliff", "telecom_cliff",
+                  "aligned_cliff", "life_cert_overdue", "bank_inactivity", "telecom_quiet", "alive_itr", "alive_utility"]
+
 @app.route("/queue/export")
 def queue_export():
     r = guard("officer", "supervisor", "auditor")
     if r: return r
-    import tempfile, os as _os
-    from scripts.export_flags import export, SIGNALS
-    fd, path = tempfile.mkstemp(suffix=".csv")
-    _os.close(fd)
-    try:
-        export(path)
-        with open(path) as fh:
-            body = fh.read()
-    finally:
-        _os.unlink(path)
-    rows = list(csv.reader(io.StringIO(body)))
+    me = current_actor()
+    frag, params = scope_sql(me)
+    c = conn()
+    cases = c.execute(
+        "SELECT cases.* FROM cases JOIN pension_master USING(pensioner_id) "
+        f"WHERE cases.state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION') AND {frag} "
+        "ORDER BY priority DESC, probability DESC", params).fetchall()
     out = io.StringIO()
     w = csv.writer(out)
-    for i, row in enumerate(rows):
-        w.writerow(row if i == 0 else [csv_cell(x) for x in row])
-    c0 = conn()
-    audit.append(c0, current_actor().username, "queue_export", None, "", current_actor().role)
-    c0.commit()
-    c0.close()
-    body = out.getvalue()
-    return Response(body, mimetype="text/csv",
+    w.writerow(["rank", "case_id", "pensioner_id", "review_priority_score", "priority_flag"]
+               + [f"sig_{s}" for s in EXPORT_SIGNALS] + [f"effect_{s}" for s in EXPORT_SIGNALS])
+    for i, case in enumerate(cases, 1):
+        sigs = {x["signal"]: x for x in c.execute("SELECT * FROM signals WHERE case_id=?", (case["id"],))}
+        row = [i, case["id"], case["pensioner_id"], case["probability"], case["priority"]] \
+            + [int(sigs[x]["present"]) if x in sigs else "" for x in EXPORT_SIGNALS] \
+            + [sigs[x]["value"] if x in sigs else "" for x in EXPORT_SIGNALS]
+        w.writerow([csv_cell(v) if isinstance(v, str) else v for v in row])
+    audit.append(c, me.username, "queue_export", None, "", me.role)
+    c.commit()
+    c.close()
+    return Response(out.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=ranked_flags.csv"})
 
 @app.route("/context")
@@ -547,7 +590,8 @@ def recalibrate():
 
 @app.context_processor
 def inject():
-    return {"request": request}
+    a = current_actor()
+    return {"request": request, "me_user": a.username if a else None, "me_role": a.role if a else None}
 
 if __name__ == "__main__":
     app.run(host=os.environ.get("PIM_HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)))

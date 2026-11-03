@@ -18,7 +18,8 @@ def c():
     wf.ensure_schema(conn)
     conn.execute("INSERT INTO pension_master(pensioner_id,full_name,monthly_amount,pension_status) VALUES('P1','Test Person',30000,'ACTIVE')")
     conn.execute("INSERT INTO cases(pensioner_id,created_at,state) VALUES('P1','2026-01-01T00:00:00Z','FLAGGED')")
-    for s in ("a", "b"):
+    from pim.pipeline import VERIFICATION_STEPS
+    for s in VERIFICATION_STEPS:
         conn.execute("INSERT INTO verifications(case_id,step) VALUES(1,?)", (s,))
     conn.commit()
     yield conn
@@ -26,7 +27,7 @@ def c():
 
 
 def verified(c):
-    for vid in (1, 2):
+    for vid in (1, 2, 3, 4):
         wf.complete_step(c, 1, vid, True, "", OFF)
 
 

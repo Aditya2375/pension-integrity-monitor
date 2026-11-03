@@ -31,6 +31,30 @@ TRANSITIONS = {
     "SURVIVOR_ROUTING": {"CLOSED_CONFIRMED"},
     "RELEASED": set(), "DISMISSED": set(), "CLOSED_CONFIRMED": set(),
 }
+# Which action may take each edge. A route can never move a case along an
+# edge unless the matching workflow function is the one doing it.
+EDGE_ACTIONS = {
+    ("FLAGGED", "UNDER_REVIEW"): {"start_review"},
+    ("FLAGGED", "VERIFICATION"): {"verify_step"},
+    ("UNDER_REVIEW", "VERIFICATION"): {"verify_step"},
+    ("FLAGGED", "DISMISSED"): {"dismiss"}, ("UNDER_REVIEW", "DISMISSED"): {"dismiss"},
+    ("VERIFICATION", "DISMISSED"): {"dismiss"},
+    ("VERIFICATION", "HOLD_PROPOSED"): {"propose_hold"},
+    ("VERIFICATION", "DEATH_PROPOSED"): {"propose_confirm_death"},
+    ("HOLD_PROPOSED", "NOTICE"): {"approve_hold"},
+    ("HOLD_PROPOSED", "VERIFICATION"): {"reject_hold"},
+    ("DEATH_PROPOSED", "SURVIVOR_ROUTING"): {"approve_death"},
+    ("DEATH_PROPOSED", "VERIFICATION"): {"reject_confirm_death", "reject_death"},
+    ("NOTICE", "HELD"): {"suspend"},
+    ("NOTICE", "APPEAL_REVIEW"): {"appeal_filed"},
+    ("HELD", "APPEAL_REVIEW"): {"appeal_filed"},
+    ("NOTICE", "RELEASED"): {"release"},
+    ("HELD", "RELEASED"): {"release"},
+    ("APPEAL_REVIEW", "RELEASED"): {"appeal_reversed"},
+    ("APPEAL_REVIEW", "HELD"): {"appeal_upheld"},
+    ("SURVIVOR_ROUTING", "CLOSED_CONFIRMED"): {"survivor_routing_complete"},
+    ("VERIFICATION", "VERIFICATION"): set(),
+}
 OPEN_STATES = ("FLAGGED", "UNDER_REVIEW", "VERIFICATION")
 # Recommended payment status per state, recorded on the case. The source
 # pension feed is immutable; the payment system reads this via the API.
@@ -106,6 +130,9 @@ def ensure_schema(conn):
     for col, typ in CASE_COLUMNS.items():
         if col not in have:
             conn.execute(f"ALTER TABLE cases ADD COLUMN {col} {typ}")
+    ev = {r["name"] for r in conn.execute("PRAGMA table_info(appeal_evidence)")}
+    if "status" not in ev:
+        conn.execute("ALTER TABLE appeal_evidence ADD COLUMN status TEXT NOT NULL DEFAULT 'QUARANTINED'")
     conn.commit()
 
 
@@ -146,10 +173,12 @@ def _case(conn, cid):
     return c
 
 
-def _move(conn, case, new, actor, action, detail="", **fields):
+def _move(conn, case, new, actor, action, **fields):
     old = case["state"]
     if new not in TRANSITIONS.get(old, set()):
         raise WorkflowError(f"illegal transition {old} -> {new}")
+    if action not in EDGE_ACTIONS.get((old, new), set()) and action != "auto_to_verification":
+        raise WorkflowError(f"{action} cannot move a case from {old} to {new}")
     sets = {"state": new, "state_changed_at": _now(), **fields}
     cols = ", ".join(f"{k}=?" for k in sets)
     conn.execute(f"UPDATE cases SET {cols} WHERE id=?", (*sets.values(), case["id"]))
@@ -205,12 +234,14 @@ def complete_step(conn, cid, vid, done, note, actor):
     _need(conn, actor, "verify", c)
     if c["state"] not in OPEN_STATES:
         raise WorkflowError("verification is closed for this case")
-    conn.execute("UPDATE verifications SET done=?, note=? WHERE id=? AND case_id=?",
-                 (1 if done else 0, note or "", vid, cid))
+    cur = conn.execute("UPDATE verifications SET done=?, note=? WHERE id=? AND case_id=?",
+                       (1 if done else 0, note or "", vid, cid))
+    if cur.rowcount != 1:
+        raise WorkflowError("that verification step does not belong to this case")
     if c["state"] in ("FLAGGED", "UNDER_REVIEW"):
-        _move(conn, c, "VERIFICATION", actor, "verify_step", f"step={vid} done={int(bool(done))}")
+        _move(conn, c, "VERIFICATION", actor, "verify_step")
     else:
-        audit.append(conn, actor.username, "verify_step", cid, f"step={vid} done={int(bool(done))}", actor.role)
+        audit.append(conn, actor.username, "verify_step", cid, f"step{int(vid)}_done{int(bool(done))}", actor.role)
 
 
 def dismiss(conn, cid, actor, note):
@@ -218,12 +249,19 @@ def dismiss(conn, cid, actor, note):
         raise WorkflowError("a reason is required to dismiss")
     c = _case(conn, cid)
     _need(conn, actor, "verify", c)
-    _move(conn, c, "DISMISSED", actor, "dismiss", note[:200], outcome_note=note.strip())
+    _move(conn, c, "DISMISSED", actor, "dismiss", outcome_note=note.strip())
+
+
+def expected_steps():
+    from .pipeline import VERIFICATION_STEPS
+    return sorted(VERIFICATION_STEPS)
 
 
 def _steps_complete(conn, cid):
-    r = conn.execute("SELECT COUNT(*) t, COALESCE(SUM(done),0) d FROM verifications WHERE case_id=?", (cid,)).fetchone()
-    return r["t"] > 0 and r["t"] == r["d"]
+    """The case must carry exactly the expected checks, each once, all done.
+    A missing, extra, duplicated or renamed row fails."""
+    rows = conn.execute("SELECT step, done FROM verifications WHERE case_id=?", (cid,)).fetchall()
+    return sorted(r["step"] for r in rows) == expected_steps() and all(r["done"] == 1 for r in rows)
 
 
 def propose(conn, cid, kind, actor, reason):
@@ -239,14 +277,14 @@ def propose(conn, cid, kind, actor, reason):
     if c["state"] not in OPEN_STATES:
         raise WorkflowError(f"cannot propose from {c['state']}")
     if not _steps_complete(conn, cid):
-        raise WorkflowError("verification steps must exist and all be completed first")
+        raise WorkflowError("all four required verification checks must be present and completed first")
     if c["state"] != "VERIFICATION":
         _move(conn, c, "VERIFICATION", actor, "auto_to_verification")
         c = _case(conn, cid)
     new = "HOLD_PROPOSED" if kind == "hold" else "DEATH_PROPOSED"
     conn.execute("INSERT INTO decisions(case_id,kind,proposer,reason,proposed_at) VALUES(?,?,?,?,?)",
                  (cid, kind, actor.username, reason[:4000], _now()))
-    _move(conn, c, new, actor, f"propose_{kind}", "", proposed_by=actor.username)
+    _move(conn, c, new, actor, f"propose_{kind}", proposed_by=actor.username)
 
 
 def _pending(conn, cid):
@@ -268,13 +306,13 @@ def decide(conn, cid, actor, approve, note=""):
     conn.execute("UPDATE decisions SET approver=?, decided_at=?, status=?, decision_note=? WHERE id=?",
                  (actor.username, _now(), "APPROVED" if approve else "REJECTED", note, d["id"]))
     if not approve:
-        _move(conn, c, "VERIFICATION", actor, f"reject_{d['kind']}", note[:200])
+        _move(conn, c, "VERIFICATION", actor, f"reject_{d['kind']}")
         return
     now = _now()
     if d["kind"] == "hold":
         days = _setting_days(conn, "notice_period_days", NOTICE_DAYS_DEFAULT)
         due = (_parse(now) + timedelta(days=days)).isoformat(timespec="seconds") + "Z"
-        _move(conn, c, "NOTICE", actor, "approve_hold", f"notice_days={days}",
+        _move(conn, c, "NOTICE", actor, "approve_hold",
               approved_by=actor.username, notice_issued_at=now, notice_due_at=due,
               hold_reasons=d["reason"])
         tid = new_tracking_id()
@@ -282,7 +320,7 @@ def decide(conn, cid, actor, approve, note=""):
                      (tid, cid, now, "Notice issued"))
         notify.enqueue(conn, cid, "notice_issued", {"tracking_id": tid, "due": due[:10]})
     else:
-        _move(conn, c, "SURVIVOR_ROUTING", actor, "approve_death", "", approved_by=actor.username,
+        _move(conn, c, "SURVIVOR_ROUTING", actor, "approve_death", approved_by=actor.username,
               outcome="confirmed_deceased", outcome_note=d["reason"])
         for s in SURVIVOR_CHECKLIST:
             conn.execute("INSERT INTO survivor_steps(case_id,step) VALUES(?,?)", (cid, s))
@@ -298,7 +336,7 @@ def suspend(conn, cid, actor, override_reason=""):
     now = _now()
     if _parse(now) < _parse(c["notice_due_at"]) and not (override_reason or "").strip():
         raise WorkflowError(f"notice period runs until {c['notice_due_at']}; give a written reason to override")
-    _move(conn, c, "HELD", actor, "suspend", f"override={override_reason[:200]}" if override_reason else "",
+    _move(conn, c, "HELD", actor, "suspend",
           held_at=now, suspended_at=now,
           override_reason=(override_reason or "").strip()[:500] or None)
 
@@ -328,7 +366,7 @@ def file_appeal(conn, tracking_id, statement, contact=""):
     conn.execute("UPDATE appeals SET status='OPEN', statement=?, contact=?, submitted_at=? WHERE id=?",
                  (statement[:5000], (contact or "")[:200], now, n["id"]))
     conn.execute("UPDATE cases SET arrears=?, suspended_at=NULL, restored_at=? WHERE id=?", (arrears, now, cid))
-    _move(conn, _case(conn, cid), "APPEAL_REVIEW", actor, "appeal_filed", "")
+    _move(conn, _case(conn, cid), "APPEAL_REVIEW", actor, "appeal_filed")
     _request_reinstatement(conn, cid, "PROVISIONAL", "appellant", arrears)
     notify.enqueue(conn, cid, "appeal_received", {"tracking_id": tracking_id})
     return cid
@@ -349,9 +387,9 @@ def resolve_appeal(conn, cid, actor, uphold, note):
     tid = conn.execute("SELECT tracking_id FROM appeals WHERE case_id=? ORDER BY id DESC", (cid,)).fetchone()["tracking_id"]
     notify.enqueue(conn, cid, "appeal_upheld" if uphold else "appeal_reversed", {"tracking_id": tid})
     if uphold:
-        _move(conn, c, "HELD", actor, "appeal_upheld", note[:200], held_at=now, suspended_at=now, restored_at=None)
+        _move(conn, c, "HELD", actor, "appeal_upheld", held_at=now, suspended_at=now, restored_at=None)
     else:
-        _move(conn, c, "RELEASED", actor, "appeal_reversed", note[:200], released_at=now,
+        _move(conn, c, "RELEASED", actor, "appeal_reversed", released_at=now,
               outcome="confirmed_alive", outcome_note=note.strip())
         _request_reinstatement(conn, cid, "FULL", actor.username, float(c["arrears"] or 0))
 
@@ -362,9 +400,11 @@ def release(conn, cid, actor, note):
         raise WorkflowError("a reason is required to release")
     c = _case(conn, cid)
     _need(conn, actor, "approve_decision", c)
+    if c["state"] == "APPEAL_REVIEW":
+        raise WorkflowError("a case under appeal can only be released through the independent appeal decision")
     now = _now()
     arrears = _arrears(conn, c, now)
-    _move(conn, c, "RELEASED", actor, "release", f"arrears={arrears}", released_at=now, arrears=arrears,
+    _move(conn, c, "RELEASED", actor, "release", released_at=now, arrears=arrears,
           suspended_at=None, outcome="confirmed_alive", outcome_note=note.strip())
     _request_reinstatement(conn, cid, "FULL", actor.username, arrears)
     return arrears
@@ -377,7 +417,7 @@ def complete_survivor_step(conn, cid, step_id, done, note, actor):
         raise WorkflowError("case is not in survivor routing")
     conn.execute("UPDATE survivor_steps SET done=?, note=? WHERE id=? AND case_id=?",
                  (1 if done else 0, note or "", step_id, cid))
-    audit.append(conn, actor.username, "survivor_step", cid, f"step={step_id} done={int(bool(done))}", actor.role)
+    audit.append(conn, actor.username, "survivor_step", cid, f"step{int(step_id)}_done{int(bool(done))}", actor.role)
     r = conn.execute("SELECT COUNT(*) t, SUM(done) d FROM survivor_steps WHERE case_id=?", (cid,)).fetchone()
     if r["t"] and r["t"] == (r["d"] or 0):
         _move(conn, _case(conn, cid), "CLOSED_CONFIRMED", actor, "survivor_routing_complete")

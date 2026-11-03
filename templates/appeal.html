@@ -21,7 +21,7 @@
     <p><button class="btn">{{ t('send_code') }}</button></p>
   </form>
   {% elif step == 'code' %}
-  {% if demo_code %}<p class="msg">Synthetic demo only. The code is <b>{{ demo_code }}</b>. A real deployment sends it to the phone on record.</p>{% endif %}
+  {% if demo_code %}<p class="msg">Synthetic demo only. The code is <b>{{ demo_code }}</b>. A real deployment sends it through a connected message service.</p>{% endif %}
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="check_code">

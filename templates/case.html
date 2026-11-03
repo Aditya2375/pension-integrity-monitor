@@ -157,8 +157,21 @@
   <p><b>{{ a['status'] }}</b> &middot; reference <code>{{ a['tracking_id'] }}</code> &middot; {{ a['submitted_at'] }}<br>
   {{ a['statement'] }}{% if a['decision'] %}<br><span class="muted">Decision: {{ a['decision'] }}</span>{% endif %}</p>
   {% endfor %}
-  {% for e in evidence %}<p><a href="{{ url_for('evidence_file', eid=e['id']) }}">Evidence file {{ e['id'] }}</a> <span class="muted">({{ e['mime'] }}, {{ e['size'] // 1024 }} KB, SHA-256 {{ e['sha256'][:12] }}...)</span></p>{% endfor %}
+  {% for e in evidence %}<p><a href="{{ url_for('evidence_file', eid=e['id']) }}">Evidence file {{ e['id'] }}</a> <span class="muted">({{ e['mime'] }}, {{ e['size'] // 1024 }} KB, SHA-256 {{ e['sha256'][:12] }}...). Not virus-scanned: structure checked only. Open it in a sandboxed viewer.</span></p>{% endfor %}
   {% for r in reinst %}<p>Reinstatement request ({{ r['kind'].lower() }}): {{ r['status'].lower() }}, arrears due {{ '%.2f'|format(r['arrears_due']) }}. <span class="muted">This system records the request. The payer confirms the payment.</span></p>{% endfor %}
+</div>
+{% endif %}
+
+{% if outbox %}
+<div class="card">
+  <h2>Messages to the family</h2>
+  {% if not delivery_ready %}<p class="err">No message service is connected on this system. These messages are queued only and have not been sent.</p>{% endif %}
+  <table>
+    <caption class="sr">Queued and sent messages</caption>
+    <thead><tr><th scope="col">Message</th><th scope="col">Queued</th><th scope="col">Status</th></tr></thead>
+    <tbody>{% for o in outbox %}<tr><td>{{ o['template'].replace('_',' ') }}</td><td>{{ o['created_at'] }}</td>
+    <td>{{ {'PENDING':'Queued, not sent','SENT':'Sent','FAILED':'Failed after retries'}[o['status']] }}{% if o['attempts'] %} ({{ o['attempts'] }} tries){% endif %}</td></tr>{% endfor %}</tbody>
+  </table>
 </div>
 {% endif %}
 

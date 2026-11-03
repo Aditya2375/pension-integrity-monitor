@@ -1,6 +1,6 @@
 import csv, io, pathlib
 import pytest
-from conftest import Client, as_user
+from conftest import Client, as_user, make_png, make_pdf
 import app as app_module
 from pim import db
 
@@ -37,7 +37,7 @@ def test_end_to_end(fresh_db):
 
     # proposal blocked until every verification step is done
     r = rev.post(f"/case/{cid}/propose", {"kind": "hold", "reason": "registry match"}, follow_redirects=True)
-    assert b"verification steps" in r.data
+    assert b"verification checks" in r.data
     for s in steps:
         rev.post(f"/case/{cid}/verify", {"vid": s["id"], "done": "1", "note": "checked"})
     r = rev.post(f"/case/{cid}/propose", {"kind": "hold", "reason": ""}, follow_redirects=True)
@@ -70,10 +70,10 @@ def test_end_to_end(fresh_db):
     assert b"not valid" in bad.data or b"Case" in bad.data
     r = fam.post("/appeal", {"action": "check_code", "code": code}, csrf="/appeal")
     assert b"Where your case stands" in r.data
-    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    png = make_png()
     r = fam.post("/appeal", {"action": "appeal", "statement": "He is alive.", "contact": "x",
                              "evidence": (io.BytesIO(png), "proof.png")}, content_type="multipart/form-data", csrf="/appeal")
-    assert b"restored" in r.data.lower() or b"received" in r.data.lower()
+    assert b"asked for your payment to continue" in r.data.lower() or b"received" in r.data.lower()
 
     c = db.connect()
     case = c.execute("SELECT * FROM cases WHERE id=?", (cid,)).fetchone()

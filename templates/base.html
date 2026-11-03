@@ -11,11 +11,11 @@
 <header class="top">
   <h1>Pension Integrity Monitor</h1>
   <nav aria-label="Main">
-    {% if session.get('user') %}
+    {% if me_user %}
     <a href="{{ url_for('dashboard') }}">Dashboard</a>
     <a href="{{ url_for('queue') }}">Review queue</a>
     <a href="{{ url_for('appeals') }}">Appeals</a>
-    {% if session.get('role') == 'admin' %}
+    {% if me_role == 'admin' %}
     <a href="{{ url_for('ingest_page') }}">Ingestion</a>
     <a href="{{ url_for('settings_page') }}">Settings</a>
     {% endif %}
@@ -24,7 +24,7 @@
     <a href="{{ url_for('context_page') }}">Public data</a>
     <form method="post" action="{{ url_for('logout') }}" class="inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="linkbtn">Sign out ({{ session.get('user') }}, {{ session.get('role') }})</button>
+      <button class="linkbtn">Sign out ({{ me_user }}, {{ me_role }})</button>
     </form>
     {% else %}
     <a href="{{ url_for('appeal_portal') }}">Family appeal portal</a>
