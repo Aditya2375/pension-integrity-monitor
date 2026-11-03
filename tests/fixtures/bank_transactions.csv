@@ -1,0 +1,5 @@
+account_number,txn_date,txn_type,amount,channel,narration
+AC2,2026-01-10,DR,500,ATM,cash
+AC2,2026-02-10,DR,500,ATM,cash
+AC2,2026-03-10,DR,500,ATM,cash
+AC3,2026-10-28,DR,400,ATM,cash

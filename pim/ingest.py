@@ -6,53 +6,79 @@ from datetime import datetime
 from . import db
 
 FEED_SCHEMAS = {
-    "pension_disburser": {
-        "required": ["pensioner_id", "name", "gender", "dob", "scheme", "monthly_amount"],
-        "optional": ["address", "last_life_cert_date"],
-        "table": "pensioners",
-        "key": "pensioner_id",
-        "help": "One row per pensioner on the disburser's roll. dob as YYYY-MM-DD or DD-MM-YYYY.",
+    "pension_master": {
+        "required": ["pensioner_id", "full_name", "dob", "gender", "aadhaar_number", "pan",
+                     "bank_account", "ifsc", "mobile", "address", "district", "state",
+                     "scheme_code", "monthly_amount", "pension_start_date", "pension_status"],
+        "optional": [],
+        "table": "pension_master", "key": "pensioner_id",
+        "help": "One row per pensioner. scheme_code OPS|IGNOAPS|StateWidow|EPS95; pension_status ACTIVE|STOPPED.",
+    },
+    "pension_disbursements": {
+        "required": ["pensioner_id", "month", "amount", "credit_date", "bank_account"],
+        "optional": [], "table": "pension_disbursements", "key": None,
+        "help": "One row per monthly pension credit. month as yyyy-mm.",
     },
     "death_registry": {
-        "required": ["death_id", "name", "gender", "dob", "date_of_death"],
-        "optional": ["address", "registrar"],
-        "table": "death_records",
-        "key": "death_id",
-        "help": "One row per registered death from the civil registry.",
-    },
-    "electoral_roll": {
-        "required": ["epic", "name", "gender", "dob", "status"],
-        "optional": ["address"],
-        "table": "electoral",
-        "key": "epic",
-        "help": "Electoral roll extract; status is active or deleted.",
-    },
-    "bank_inactivity": {
-        "required": ["account_ref", "pensioner_id", "months_inactive"],
-        "optional": ["name", "dob", "last_txn_date"],
-        "table": "bank_activity",
-        "key": "account_ref",
-        "help": "One row per pension bank account, with months since last customer transaction.",
+        "required": ["registration_no", "deceased_name", "dob", "gender", "date_of_death",
+                     "registration_date", "place_of_death", "district", "aadhaar_number"],
+        "optional": [], "table": "death_registry", "key": "registration_no",
+        "help": "One row per registered death; aadhaar_number may be blank.",
     },
     "life_certificates": {
-        "required": ["pensioner_id", "cert_date"],
-        "optional": ["mode"],
-        "table": "life_certs",
-        "key": None,
-        "help": "One row per submitted life certificate (DLC), mode face/manual/camp.",
+        "required": ["pensioner_id", "certificate_id", "submission_date", "channel", "status"],
+        "optional": [], "table": "life_certificates", "key": None,
+        "help": "One row per submitted life certificate.",
+    },
+    "bank_transactions": {
+        "required": ["account_number", "txn_date", "txn_type", "amount", "channel", "narration"],
+        "optional": [], "table": "bank_transactions", "key": None,
+        "help": "Customer-initiated transactions only; pension credits arrive via pension_disbursements.",
+    },
+    "telecom_activity": {
+        "required": ["mobile", "month", "calls_made", "sms_sent", "data_mb", "last_activity_date"],
+        "optional": [], "table": "telecom_activity", "key": None,
+        "help": "One row per mobile per month.",
+    },
+    "toll_fastag": {
+        "required": ["tag_id", "vehicle_plate", "txn_timestamp", "toll_plaza", "amount"],
+        "optional": [], "table": "toll_fastag", "key": None,
+        "help": "FASTag toll transactions. No pensioner-joinable field; stored for record only.",
+    },
+    "utility_bills": {
+        "required": ["consumer_id", "consumer_name", "service_address", "month", "units_kwh", "bill_paid_date"],
+        "optional": [], "table": "utility_bills", "key": None,
+        "help": "One row per electricity bill; links by consumer name and service address.",
+    },
+    "hospital_records": {
+        "required": ["patient_name", "dob", "gender", "admit_date", "discharge_date", "outcome",
+                     "hospital_name", "district"],
+        "optional": [], "table": "hospital_records", "key": None,
+        "help": "One row per admission; outcome DIED|DISCHARGED.",
+    },
+    "tax_pan_activity": {
+        "required": ["pan", "financial_year", "itr_filed", "filing_date"],
+        "optional": [], "table": "tax_pan_activity", "key": None,
+        "help": "One row per PAN per financial year.",
+    },
+    "electoral_roll": {
+        "required": ["epic_number", "name", "dob", "gender", "address", "district", "status", "deletion_date"],
+        "optional": [], "table": "electoral_roll", "key": "epic_number",
+        "help": "Electoral roll extract; status ACTIVE|DELETED.",
     },
 }
+
+BLANK_OK = {"death_registry": {"aadhaar_number"}, "electoral_roll": {"deletion_date"},
+           "hospital_records": {"discharge_date"}, "tax_pan_activity": {"filing_date"}}
+
+NUMERIC = {"pension_master": ["monthly_amount"], "pension_disbursements": ["amount"],
+           "bank_transactions": ["amount"], "toll_fastag": ["amount"],
+           "telecom_activity": ["calls_made", "sms_sent", "data_mb"],
+           "utility_bills": ["units_kwh"]}
 
 def template_csv(feed_id):
     s = FEED_SCHEMAS[feed_id]
     return ",".join(s["required"] + s["optional"]) + "\n"
-
-def _row_ok(feed_id, row):
-    s = FEED_SCHEMAS[feed_id]
-    for col in s["required"]:
-        if not (row.get(col) or "").strip():
-            return False
-    return True
 
 def ingest_csv(conn, feed_id, text, source="LIVE"):
     if feed_id not in FEED_SCHEMAS:
@@ -65,20 +91,27 @@ def ingest_csv(conn, feed_id, text, source="LIVE"):
         raise ValueError("missing required columns: " + ", ".join(missing))
     loaded = rejected = 0
     table, key = s["table"], s["key"]
+    cols = s["required"] + s["optional"]
     for row in reader:
         row = {k.strip(): (v or "").strip() for k, v in row.items() if k}
-        if not _row_ok(feed_id, row):
+        blanks_allowed = BLANK_OK.get(feed_id, set())
+        if any(not row.get(c, "") for c in s["required"] if c not in blanks_allowed):
             rejected += 1
             continue
-        cols = s["required"] + s["optional"]
-        vals = [row.get(c, "") for c in cols]
-        if table == "pensioners":
-            if "monthly_amount" in row:
+        vals = []
+        bad = False
+        for c in cols:
+            v = row.get(c, "")
+            if c in NUMERIC.get(table, []) and v:
                 try:
-                    vals[cols.index("monthly_amount")] = float(row["monthly_amount"])
+                    v = float(v)
                 except ValueError:
-                    rejected += 1
-                    continue
+                    bad = True
+                    break
+            vals.append(v)
+        if bad:
+            rejected += 1
+            continue
         if key:
             ph = ",".join("?" for _ in cols)
             upd = ",".join(f"{c}=excluded.{c}" for c in cols if c != key)

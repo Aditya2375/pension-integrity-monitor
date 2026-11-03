@@ -4,7 +4,7 @@
   <h2>Case #{{ case['id'] }} - {{ case['name'] }} <span class="pill grey">{{ case['state'] }}</span></h2>
   <p>
     {{ case['pensioner_id'] }} &middot; {{ case['scheme'] }} &middot; {{ case['gender'] }} &middot; DoB {{ case['dob'] }}<br>
-    <span class="muted">{{ case['address'] or 'No address on record' }} &middot; Monthly pension {{ case['monthly_amount'] }} &middot; Last life certificate: {{ case['last_life_cert_date'] or 'none on record' }}</span>
+    <span class="muted">{{ case['address'] or 'No address on record' }} &middot; Monthly pension {{ case['monthly_amount'] }}</span>
   </p>
   <p>Calibrated probability: <span class="prob">{{ '%.1f%%'|format(case['probability'] * 100) }}</span>
   (log-odds {{ case['log_odds'] }}, base rate {{ case['base_rate'] }})</p>
@@ -31,10 +31,8 @@
 <div class="card">
   <h2>Death-registry match</h2>
   <table>
-    <tr><th>Registry name</th><th>Date of death</th><th>Registrar</th><th>Name match</th><th>Gender match</th><th>DoB</th><th>Identity score</th></tr>
-    <tr><td>{{ match['dname'] }}</td><td>{{ match['date_of_death'] }}</td><td>{{ match['registrar'] or '-' }}</td>
-    <td>{{ '%.0f%%'|format(match['name_pct'] * 100) }}</td><td>{{ 'yes' if match['gender_ok'] else 'no' }}</td>
-    <td>{{ match['dob_match'] }}</td><td class="prob">{{ '%.2f'|format(match['score']) }}</td></tr>
+    <tr><th>Registration</th><th>Registry name</th><th>Date of death</th><th>District</th></tr>
+    <tr><td>{{ match['registration_no'] }}</td><td>{{ match['dname'] }}</td><td>{{ match['date_of_death'] }}</td><td>{{ match['registrar'] or '-' }}</td></tr>
   </table>
 </div>
 {% endif %}

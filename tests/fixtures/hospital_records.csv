@@ -1,0 +1,2 @@
+patient_name,dob,gender,admit_date,discharge_date,outcome,hospital_name,district
+Placeholder Person,1950-01-01,M,2026-01-01,2026-01-05,DISCHARGED,Test Hospital,TestDist

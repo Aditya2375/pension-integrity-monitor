@@ -1,2 +1,2 @@
-pensioner_id,cert_date,mode
-T003,2025-11-10,face
+pensioner_id,certificate_id,submission_date,channel,status
+T003,C1,2026-01-10,face,VERIFIED

@@ -6,9 +6,9 @@ The system never stops a pension by itself. Flags only order a review queue. A p
 
 ## What it does
 
-- **Ingestion adapters**, one per department feed: pension disburser roll, civil death registry, electoral roll, bank inactivity report, life certificate feed. Each adapter validates a CSV against the feed's documented schema, rejects bad rows and records feed health. Nothing is fabricated: only the records you load enter the system.
+- **Ingestion adapters**, one per department feed: pension master roll, pension disbursements, civil death registry, life certificates, bank transactions, telecom activity, toll FASTag, utility bills, hospital records, tax PAN activity, electoral roll. Each adapter validates a CSV against the feed's documented schema, rejects bad rows and records feed health. Nothing is fabricated: only the records you load enter the system.
 - **Identity matching** modelled on the UIDAI-style threshold approach: name-match percentage with phonetic tolerance, a hard gender gate, and date-of-birth agreement (exact, year-only, mismatch), combined into a 0-1 identity score with a configurable threshold.
-- **Per-signal likelihood-ratio scoring** on a configurable base rate, producing a calibrated probability per pensioner. Signals: death-registry match (scaled by identity-match confidence), electoral deletion, bank inactivity, overdue life certificate, age over 90.
+- **Per-signal likelihood-ratio scoring** on a configurable base rate, producing a calibrated probability per pensioner. Death evidence: death-registry match, hospital DIED record, electoral deletion. Silence evidence: activity cliffs (a sustained stop after regular bank or telecom activity, with extra weight when both feeds go quiet in the same month), overdue or missing life certificate, bank inactivity, quiet SIM. Alive evidence: verified life certificate, customer bank activity, telecom activity, ITR filed, recent utility bill, all applied with temporal consistency: only activity after an evidenced death date counts, and post-death bank or SIM activity is discounted because families sometimes keep using them.
 - **Cost-based priority threshold**: p* = C(false hold) / (C(false hold) + C(missed death)). It ranks the queue; it triggers no action.
 - **Officer review queue** ordered by calibrated probability, with the full signal breakdown and the matched registry entry on each case.
 - **Verification steps** (registrar cross-check, field visit, family contact, bank confirmation) that must all complete before a hold is possible.
@@ -24,11 +24,17 @@ Download headers-only templates from the ingestion page (`/templates/<feed>.csv`
 
 | Feed | Required columns |
 | --- | --- |
-| pension_disburser | pensioner_id, name, gender, dob, scheme, monthly_amount |
-| death_registry | death_id, name, gender, dob, date_of_death |
-| electoral_roll | epic, name, gender, dob, status |
-| bank_inactivity | account_ref, pensioner_id, months_inactive |
-| life_certificates | pensioner_id, cert_date |
+| pension_master | pensioner_id, full_name, dob, gender, aadhaar_number, pan, bank_account, ifsc, mobile, address, district, state, scheme_code, monthly_amount, pension_start_date, pension_status |
+| pension_disbursements | pensioner_id, month, amount, credit_date, bank_account |
+| death_registry | registration_no, deceased_name, dob, gender, date_of_death, registration_date, place_of_death, district, aadhaar_number (may be blank) |
+| life_certificates | pensioner_id, certificate_id, submission_date, channel, status |
+| bank_transactions | account_number, txn_date, txn_type, amount, channel, narration |
+| telecom_activity | mobile, month, calls_made, sms_sent, data_mb, last_activity_date |
+| toll_fastag | tag_id, vehicle_plate, txn_timestamp, toll_plaza, amount |
+| utility_bills | consumer_id, consumer_name, service_address, month, units_kwh, bill_paid_date |
+| hospital_records | patient_name, dob, gender, admit_date, discharge_date, outcome, hospital_name, district |
+| tax_pan_activity | pan, financial_year, itr_filed, filing_date |
+| electoral_roll | epic_number, name, dob, gender, address, district, status, deletion_date |
 
 Dates accept YYYY-MM-DD or DD-MM-YYYY.
 

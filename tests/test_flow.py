@@ -22,7 +22,7 @@ def test_end_to_end():
 
     login(c)
 
-    for feed in ["pension_disburser", "death_registry", "electoral_roll", "bank_inactivity", "life_certificates"]:
+    for feed in ["pension_master", "pension_disbursements", "death_registry", "electoral_roll", "bank_transactions", "life_certificates", "telecom_activity", "hospital_records", "tax_pan_activity", "utility_bills", "toll_fastag"]:
         data = {"file": (open(FIX / f"{feed}.csv", "rb"), f"{feed}.csv")}
         r = c.post(f"/ingest/{feed}", data=data, content_type="multipart/form-data", follow_redirects=True)
         assert r.status_code == 200, feed
@@ -30,7 +30,7 @@ def test_end_to_end():
     # rejected-row accounting: all fixture rows valid
     conn = db.connect()
     fh = {f["feed_id"]: f for f in health.feed_health(conn)}
-    assert fh["pension_disburser"]["rows_loaded"] == 3
+    assert fh["pension_master"]["rows_loaded"] == 3
     assert fh["death_registry"]["rows_loaded"] == 1
     conn.close()
 
@@ -73,8 +73,8 @@ def test_end_to_end():
     conn = db.connect()
     case = conn.execute("SELECT * FROM cases WHERE id=?", (cid,)).fetchone()
     assert case["state"] == "HELD"
-    p = conn.execute("SELECT status FROM pensioners WHERE pensioner_id='T001'").fetchone()
-    assert p["status"] == "held"
+    p = conn.execute("SELECT pension_status FROM pension_master WHERE pensioner_id='T001'").fetchone()
+    assert p["pension_status"] == "HELD"
     notice = conn.execute("SELECT * FROM appeals WHERE case_id=? AND status='NOTICE'", (cid,)).fetchone()
     tid = notice["tracking_id"]
     conn.close()
@@ -110,7 +110,7 @@ def test_end_to_end():
 
     # feed health page renders
     r = c.get("/health")
-    assert b"pension disburser" in r.data.lower() or b"Pension disburser" in r.data
+    assert b"Pension master roll" in r.data
 
 def test_empty_states():
     os.environ["PIM_DB"] = tempfile.mktemp(suffix=".sqlite3")
@@ -124,7 +124,7 @@ def test_empty_states():
     r = c.get("/appeals")
     assert b"No appeals" in r.data
     r = c.get("/templates/death_registry.csv")
-    assert r.data.startswith(b"death_id,name,gender,dob,date_of_death")
+    assert r.data.startswith(b"registration_no,deceased_name,dob,gender,date_of_death")
 
 if __name__ == "__main__":
     test_end_to_end()

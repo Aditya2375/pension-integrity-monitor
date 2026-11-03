@@ -4,8 +4,9 @@ import csv, sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from pim import db
 
-SIGNALS = ["death_registry_match", "electoral_deletion", "bank_inactivity",
-           "life_cert_overdue", "age_over_90"]
+SIGNALS = ["death_registry_match", "hospital_died_match", "electoral_deletion",
+           "bank_cliff", "telecom_cliff", "aligned_cliff", "life_cert_overdue",
+           "bank_inactivity", "telecom_quiet", "alive_itr", "alive_utility"]
 
 def export(path, states=("FLAGGED", "UNDER_REVIEW", "VERIFICATION")):
     conn = db.connect()

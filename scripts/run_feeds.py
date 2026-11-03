@@ -19,7 +19,6 @@ def main():
             loaded, rejected = ingest.ingest_csv(conn, fid, p.read_text())
             print(f"{fid}: loaded={loaded} rejected={rejected}")
     conn.commit()
-    pipeline.run_matching(conn)
     made, p_star = pipeline.run_pipeline(conn)
     conn.commit()
     conn.close()

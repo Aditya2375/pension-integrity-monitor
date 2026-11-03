@@ -11,36 +11,70 @@ CREATE TABLE IF NOT EXISTS feeds (
   rows_loaded INTEGER DEFAULT 0,
   rows_rejected INTEGER DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS pensioners (
+CREATE TABLE IF NOT EXISTS pension_master (
   pensioner_id TEXT PRIMARY KEY,
-  name TEXT, gender TEXT, dob TEXT, address TEXT,
-  scheme TEXT, monthly_amount REAL, last_life_cert_date TEXT,
-  status TEXT DEFAULT 'active', source TEXT DEFAULT 'LIVE'
+  full_name TEXT, dob TEXT, gender TEXT, aadhaar_number TEXT, pan TEXT,
+  bank_account TEXT, ifsc TEXT, mobile TEXT, address TEXT, district TEXT,
+  state TEXT, scheme_code TEXT, monthly_amount REAL, pension_start_date TEXT,
+  pension_status TEXT DEFAULT 'ACTIVE', source TEXT DEFAULT 'LIVE'
 );
-CREATE TABLE IF NOT EXISTS death_records (
-  death_id TEXT PRIMARY KEY,
-  name TEXT, gender TEXT, dob TEXT, address TEXT,
-  date_of_death TEXT, registrar TEXT, source TEXT DEFAULT 'LIVE'
-);
-CREATE TABLE IF NOT EXISTS electoral (
-  epic TEXT PRIMARY KEY,
-  name TEXT, gender TEXT, dob TEXT, address TEXT,
-  status TEXT, source TEXT DEFAULT 'LIVE'
-);
-CREATE TABLE IF NOT EXISTS bank_activity (
-  account_ref TEXT PRIMARY KEY,
-  pensioner_id TEXT, name TEXT, dob TEXT,
-  last_txn_date TEXT, months_inactive REAL, source TEXT DEFAULT 'LIVE'
-);
-CREATE TABLE IF NOT EXISTS life_certs (
+CREATE TABLE IF NOT EXISTS pension_disbursements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  pensioner_id TEXT, cert_date TEXT, mode TEXT, source TEXT DEFAULT 'LIVE'
+  pensioner_id TEXT, month TEXT, amount REAL, credit_date TEXT,
+  bank_account TEXT, source TEXT DEFAULT 'LIVE'
+);
+CREATE TABLE IF NOT EXISTS death_registry (
+  registration_no TEXT PRIMARY KEY,
+  deceased_name TEXT, dob TEXT, gender TEXT, date_of_death TEXT,
+  registration_date TEXT, place_of_death TEXT, district TEXT,
+  aadhaar_number TEXT, source TEXT DEFAULT 'LIVE'
+);
+CREATE TABLE IF NOT EXISTS life_certificates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pensioner_id TEXT, certificate_id TEXT, submission_date TEXT,
+  channel TEXT, status TEXT, source TEXT DEFAULT 'LIVE'
+);
+CREATE TABLE IF NOT EXISTS bank_transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_number TEXT, txn_date TEXT, txn_type TEXT, amount REAL,
+  channel TEXT, narration TEXT, source TEXT DEFAULT 'LIVE'
+);
+CREATE TABLE IF NOT EXISTS telecom_activity (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mobile TEXT, month TEXT, calls_made REAL, sms_sent REAL, data_mb REAL,
+  last_activity_date TEXT, source TEXT DEFAULT 'LIVE'
+);
+CREATE TABLE IF NOT EXISTS toll_fastag (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tag_id TEXT, vehicle_plate TEXT, txn_timestamp TEXT, toll_plaza TEXT,
+  amount REAL, source TEXT DEFAULT 'LIVE'
+);
+CREATE TABLE IF NOT EXISTS utility_bills (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  consumer_id TEXT, consumer_name TEXT, service_address TEXT, month TEXT,
+  units_kwh REAL, bill_paid_date TEXT, source TEXT DEFAULT 'LIVE'
+);
+CREATE TABLE IF NOT EXISTS hospital_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_name TEXT, dob TEXT, gender TEXT, admit_date TEXT,
+  discharge_date TEXT, outcome TEXT, hospital_name TEXT, district TEXT,
+  source TEXT DEFAULT 'LIVE'
+);
+CREATE TABLE IF NOT EXISTS tax_pan_activity (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pan TEXT, financial_year TEXT, itr_filed TEXT, filing_date TEXT,
+  source TEXT DEFAULT 'LIVE'
+);
+CREATE TABLE IF NOT EXISTS electoral_roll (
+  epic_number TEXT PRIMARY KEY,
+  name TEXT, dob TEXT, gender TEXT, address TEXT, district TEXT,
+  status TEXT, deletion_date TEXT, source TEXT DEFAULT 'LIVE'
 );
 CREATE TABLE IF NOT EXISTS matches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  death_id TEXT, pensioner_id TEXT,
+  registration_no TEXT, pensioner_id TEXT,
   name_pct REAL, gender_ok INTEGER, dob_match TEXT, score REAL,
-  UNIQUE(death_id, pensioner_id)
+  UNIQUE(registration_no, pensioner_id)
 );
 CREATE TABLE IF NOT EXISTS signals (
   case_id INTEGER, signal TEXT, present INTEGER, value TEXT,
@@ -92,19 +126,31 @@ DEFAULT_SETTINGS = {
 }
 
 DEFAULT_WEIGHTS = {
-    "death_registry_match": (12.0, 0.40),
-    "electoral_deletion": (4.0, 0.90),
-    "bank_inactivity": (2.5, 0.85),
-    "life_cert_overdue": (2.0, 0.80),
-    "age_over_90": (1.5, 0.95),
+    "death_registry_match": (40.0, 0.50),
+    "hospital_died_match": (30.0, 0.60),
+    "electoral_deletion": (5.0, 0.70),
+    "life_cert_overdue": (2.2, 0.25),
+    "bank_inactivity": (2.0, 0.35),
+    "telecom_quiet": (1.4, 0.60),
+    "alive_itr": (1.0, 0.50),
+    "alive_utility": (1.0, 0.60),
+    "bank_cliff": (4.5, 1.0),
+    "telecom_cliff": (4.0, 1.0),
+    "aligned_cliff": (2.5, 1.0),
 }
 
 FEEDS = {
-    "pension_disburser": ("Pension disburser roll", 30),
+    "pension_master": ("Pension master roll", 30),
+    "pension_disbursements": ("Pension disbursements", 30),
     "death_registry": ("Civil death registry", 7),
-    "electoral_roll": ("Electoral roll", 90),
-    "bank_inactivity": ("Bank inactivity report", 30),
     "life_certificates": ("Life certificate feed", 30),
+    "bank_transactions": ("Bank transactions", 30),
+    "telecom_activity": ("Telecom activity", 30),
+    "toll_fastag": ("Toll FASTag", 30),
+    "utility_bills": ("Utility bills", 30),
+    "hospital_records": ("Hospital records", 30),
+    "tax_pan_activity": ("Tax PAN activity", 365),
+    "electoral_roll": ("Electoral roll", 90),
 }
 
 def connect():

@@ -1,0 +1,4 @@
+pensioner_id,month,amount,credit_date,bank_account
+T001,2026-10,3000,2026-10-05,AC1
+T002,2026-10,3000,2026-10-05,AC2
+T003,2026-10,3000,2026-10-05,AC3

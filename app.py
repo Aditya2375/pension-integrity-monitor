@@ -40,8 +40,8 @@ def dashboard():
     counts = {r["state"]: r["n"] for r in
               c.execute("SELECT state, COUNT(*) n FROM cases GROUP BY state")}
     top = c.execute(
-        "SELECT cases.*, pensioners.name, pensioners.scheme FROM cases "
-        "JOIN pensioners USING(pensioner_id) WHERE state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION') "
+        "SELECT cases.*, pension_master.full_name AS name, pension_master.scheme_code AS scheme FROM cases "
+        "JOIN pension_master USING(pensioner_id) WHERE cases.state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION') "
         "ORDER BY probability DESC LIMIT 10").fetchall()
     fh = health.feed_health(c)
     stats = feedback.stats(c)
@@ -89,7 +89,6 @@ def run_pipeline():
     r = officer_required()
     if r: return r
     c = conn()
-    pipeline.run_matching(c)
     made, p_star = pipeline.run_pipeline(c)
     c.commit()
     c.close()
@@ -101,9 +100,9 @@ def queue():
     if r: return r
     c = conn()
     rows = c.execute(
-        "SELECT cases.*, pensioners.name, pensioners.scheme, pensioners.monthly_amount FROM cases "
-        "JOIN pensioners USING(pensioner_id) "
-        "WHERE state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION') "
+        "SELECT cases.*, pension_master.full_name AS name, pension_master.scheme_code AS scheme, pension_master.monthly_amount FROM cases "
+        "JOIN pension_master USING(pensioner_id) "
+        "WHERE cases.state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION') "
         "ORDER BY priority DESC, probability DESC").fetchall()
     p_star = scoring.cost_threshold(float(db.get_setting(c, "cost_false_hold")),
                                     float(db.get_setting(c, "cost_missed_death")))
@@ -112,9 +111,9 @@ def queue():
 
 def _case_or_404(c, cid):
     case = c.execute(
-        "SELECT cases.*, pensioners.name, pensioners.gender, pensioners.dob, pensioners.address, "
-        "pensioners.scheme, pensioners.monthly_amount, pensioners.last_life_cert_date "
-        "FROM cases JOIN pensioners USING(pensioner_id) WHERE cases.id=?", (cid,)).fetchone()
+        "SELECT cases.*, pension_master.full_name AS name, pension_master.gender, pension_master.dob, "
+        "pension_master.address, pension_master.scheme_code AS scheme, pension_master.monthly_amount "
+        "FROM cases JOIN pension_master USING(pensioner_id) WHERE cases.id=?", (cid,)).fetchone()
     if not case:
         abort(404)
     return case
@@ -130,10 +129,9 @@ def case_detail(cid):
     match = None
     if case["matched_death_id"]:
         match = c.execute(
-            "SELECT matches.*, death_records.name AS dname, death_records.date_of_death, "
-            "death_records.registrar FROM matches JOIN death_records USING(death_id) "
-            "WHERE pensioner_id=? AND death_id=?",
-            (case["pensioner_id"], case["matched_death_id"])).fetchone()
+            "SELECT registration_no, deceased_name AS dname, date_of_death, district AS registrar "
+            "FROM death_registry WHERE registration_no=?",
+            (case["matched_death_id"],)).fetchone()
     appeal = c.execute("SELECT * FROM appeals WHERE case_id=? ORDER BY id DESC", (cid,)).fetchall()
     window = int(db.get_setting(c, "appeal_window_days"))
     deadline = None
@@ -178,7 +176,7 @@ def hold(cid):
     c.execute("UPDATE cases SET state='HELD', hold_reasons=?, held_at=? WHERE id=?",
               (reasons, now.isoformat(timespec="seconds") + "Z", cid))
     case = c.execute("SELECT pensioner_id FROM cases WHERE id=?", (cid,)).fetchone()
-    c.execute("UPDATE pensioners SET status='held' WHERE pensioner_id=?", (case["pensioner_id"],))
+    c.execute("UPDATE pension_master SET pension_status='HELD' WHERE pensioner_id=?", (case["pensioner_id"],))
     tid = _tracking_id()
     window = int(db.get_setting(c, "appeal_window_days"))
     c.execute("INSERT INTO appeals(tracking_id,case_id,submitted_at,statement,status) VALUES(?,?,?,?,?)",
@@ -204,7 +202,7 @@ def release(cid):
         arrears = round(months * float(case["monthly_amount"] or 0), 2)
     c.execute("UPDATE cases SET state='RELEASED', released_at=?, arrears=? WHERE id=?",
               (datetime.utcnow().isoformat(timespec="seconds") + "Z", arrears, cid))
-    c.execute("UPDATE pensioners SET status='active' WHERE pensioner_id=?", (case["pensioner_id"],))
+    c.execute("UPDATE pension_master SET pension_status='ACTIVE' WHERE pensioner_id=?", (case["pensioner_id"],))
     db.log(c, "officer", "release", f"case={cid} arrears={arrears}")
     c.commit()
     c.close()
@@ -233,7 +231,7 @@ def outcome(cid):
     feedback.record_outcome(c, cid, o, request.form.get("note", ""))
     if o == "confirmed_deceased":
         case = c.execute("SELECT pensioner_id FROM cases WHERE id=?", (cid,)).fetchone()
-        c.execute("UPDATE pensioners SET status='deceased' WHERE pensioner_id=?", (case["pensioner_id"],))
+        c.execute("UPDATE pension_master SET pension_status='DECEASED' WHERE pensioner_id=?", (case["pensioner_id"],))
         c.execute("UPDATE cases SET state='CLOSED_CONFIRMED' WHERE id=? AND state!='RELEASED'", (cid,))
     c.commit()
     c.close()
@@ -256,8 +254,8 @@ def appeals():
     if r: return r
     c = conn()
     rows = c.execute(
-        "SELECT appeals.*, cases.pensioner_id, pensioners.name FROM appeals "
-        "JOIN cases ON appeals.case_id=cases.id JOIN pensioners USING(pensioner_id) "
+        "SELECT appeals.*, cases.pensioner_id, pension_master.full_name AS name FROM appeals "
+        "JOIN cases ON appeals.case_id=cases.id JOIN pension_master USING(pensioner_id) "
         "ORDER BY appeals.id DESC").fetchall()
     c.close()
     return render_template("appeals.html", rows=rows)
@@ -285,8 +283,8 @@ def appeal_portal():
     if request.method == "POST":
         tid = (request.form.get("tracking_id") or "").strip().upper()
         row = c.execute(
-            "SELECT appeals.*, cases.held_at, cases.state, pensioners.scheme FROM appeals "
-            "JOIN cases ON appeals.case_id=cases.id JOIN pensioners USING(pensioner_id) "
+            "SELECT appeals.*, cases.held_at, cases.state, pension_master.scheme_code AS scheme FROM appeals "
+            "JOIN cases ON appeals.case_id=cases.id JOIN pension_master USING(pensioner_id) "
             "WHERE tracking_id=?", (tid,)).fetchone()
         if not row:
             err = "No case found for that tracking ID."

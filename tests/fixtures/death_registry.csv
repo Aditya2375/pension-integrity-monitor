@@ -1,2 +1,2 @@
-death_id,name,gender,dob,date_of_death,address,registrar
-D9001,Ramakrishna Bhatt,M,1938-04-12,2025-08-14,14 Test Layout,Test Registrar Office
+registration_no,deceased_name,dob,gender,date_of_death,registration_date,place_of_death,district,aadhaar_number
+DR1,Ramakrishna Bhatt,1938-04-12,M,2026-08-14,2026-08-20,TestDist,TestDist,
