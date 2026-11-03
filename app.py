@@ -69,7 +69,7 @@ def ingest_upload(feed_id):
         return redirect(url_for("ingest_page"))
     c = conn()
     try:
-        loaded, rejected = ingest.ingest_csv(c, feed_id, f.read().decode("utf-8-sig"))
+        loaded, rejected = ingest.ingest_csv_stream(c, feed_id, ingest.iter_text(f.stream))
         c.commit()
         msg = f"Loaded {loaded} rows, rejected {rejected}."
     except ValueError as e:

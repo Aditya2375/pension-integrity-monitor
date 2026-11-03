@@ -1,9 +1,27 @@
 """Ingestion adapters: one per department feed. Each adapter validates a CSV
 against the feed's documented schema, normalises rows, upserts them and
 records feed health. Adapters never fabricate records."""
-import csv, io
+import csv, io, codecs
 from datetime import datetime
 from . import db
+
+def iter_text(binary_stream, encoding="utf-8-sig"):
+    """Yield decoded text lines from any binary stream with read(), in
+    constant memory. Works where io.TextIOWrapper cannot (SpooledTemporaryFile)."""
+    dec = codecs.getincrementaldecoder(encoding)()
+    buf = ""
+    while True:
+        chunk = binary_stream.read(65536)
+        if not chunk:
+            break
+        buf += dec.decode(chunk)
+        lines = buf.split("\n")
+        buf = lines.pop()
+        for ln in lines:
+            yield ln + "\n"
+    buf += dec.decode(b"", final=True)
+    if buf:
+        yield buf
 
 FEED_SCHEMAS = {
     "pension_master": {
@@ -80,11 +98,19 @@ def template_csv(feed_id):
     s = FEED_SCHEMAS[feed_id]
     return ",".join(s["required"] + s["optional"]) + "\n"
 
+BATCH = 5000
+
 def ingest_csv(conn, feed_id, text, source="LIVE"):
+    return ingest_csv_stream(conn, feed_id, io.StringIO(text), source=source)
+
+def ingest_csv_stream(conn, feed_id, fileobj, source="LIVE"):
+    """Stream a feed CSV from any text file object in constant memory:
+    batched executemany inserts, one commit per batch. Millions of rows do
+    not materialise in memory."""
     if feed_id not in FEED_SCHEMAS:
         raise ValueError("unknown feed: " + feed_id)
     s = FEED_SCHEMAS[feed_id]
-    reader = csv.DictReader(io.StringIO(text))
+    reader = csv.DictReader(fileobj)
     headers = [h.strip() for h in (reader.fieldnames or [])]
     missing = [c for c in s["required"] if c not in headers]
     if missing:
@@ -92,6 +118,14 @@ def ingest_csv(conn, feed_id, text, source="LIVE"):
     loaded = rejected = 0
     table, key = s["table"], s["key"]
     cols = s["required"] + s["optional"]
+    ph = ",".join("?" for _ in cols)
+    if key:
+        upd = ",".join(f"{c}=excluded.{c}" for c in cols if c != key)
+        sql = (f"INSERT INTO {table}({','.join(cols)},source) VALUES({ph},?) "
+               f"ON CONFLICT({key}) DO UPDATE SET {upd}, source=excluded.source")
+    else:
+        sql = f"INSERT INTO {table}({','.join(cols)},source) VALUES({ph},?)"
+    batch = []
     for row in reader:
         row = {k.strip(): (v or "").strip() for k, v in row.items() if k}
         blanks_allowed = BLANK_OK.get(feed_id, set())
@@ -112,17 +146,15 @@ def ingest_csv(conn, feed_id, text, source="LIVE"):
         if bad:
             rejected += 1
             continue
-        if key:
-            ph = ",".join("?" for _ in cols)
-            upd = ",".join(f"{c}=excluded.{c}" for c in cols if c != key)
-            conn.execute(
-                f"INSERT INTO {table}({','.join(cols)},source) VALUES({ph},?) "
-                f"ON CONFLICT({key}) DO UPDATE SET {upd}, source=excluded.source",
-                vals + [source])
-        else:
-            ph = ",".join("?" for _ in cols)
-            conn.execute(f"INSERT INTO {table}({','.join(cols)},source) VALUES({ph},?)", vals + [source])
-        loaded += 1
+        batch.append(vals + [source])
+        if len(batch) >= BATCH:
+            conn.executemany(sql, batch)
+            conn.commit()
+            loaded += len(batch)
+            batch = []
+    if batch:
+        conn.executemany(sql, batch)
+        loaded += len(batch)
     conn.execute(
         "UPDATE feeds SET last_ingest_at=?, rows_loaded=rows_loaded+?, rows_rejected=rows_rejected+? WHERE feed_id=?",
         (datetime.utcnow().isoformat(timespec="seconds") + "Z", loaded, rejected, feed_id))
