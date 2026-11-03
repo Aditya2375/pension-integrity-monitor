@@ -12,13 +12,13 @@
   <h2>Highest-priority cases</h2>
   {% if top %}
   <table>
-    <tr><th>Case</th><th>Pensioner</th><th>Scheme</th><th>Probability</th><th>State</th><th></th></tr>
+    <tr><th>Case</th><th>Pensioner</th><th>Scheme</th><th>Review priority</th><th>State</th><th></th></tr>
     {% for c in top %}
     <tr>
       <td>#{{ c['id'] }}</td>
       <td>{{ c['name'] }}</td>
       <td>{{ c['scheme'] }}</td>
-      <td class="prob">{{ '%.1f%%'|format(c['probability'] * 100) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
+      <td class="prob">{{ '%.2f'|format(c['probability']) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
       <td>{{ c['state'] }}</td>
       <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Open</a></td>
     </tr>

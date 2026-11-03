@@ -47,6 +47,7 @@ def pending(conn, limit=100):
 
 
 def mark_sent(conn, nid):
+    conn.execute("UPDATE notifications SET params='{}' WHERE id=? AND template='otp'", (nid,))  # drop the code once sent
     conn.execute("UPDATE notifications SET status='SENT', last_attempt_at=?, attempts=attempts+1 WHERE id=?", (_now(), nid))
 
 

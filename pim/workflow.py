@@ -52,7 +52,7 @@ SURVIVOR_CHECKLIST = [
 DDL = """
 CREATE TABLE IF NOT EXISTS users (
   username TEXT PRIMARY KEY, role TEXT NOT NULL, salt TEXT NOT NULL, key_hash TEXT NOT NULL,
-  active INTEGER NOT NULL DEFAULT 1
+  active INTEGER NOT NULL DEFAULT 1, jurisdictions TEXT NOT NULL DEFAULT 'NA'
 );
 CREATE TABLE IF NOT EXISTS decisions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER NOT NULL, kind TEXT NOT NULL,
@@ -100,6 +100,8 @@ def ensure_schema(conn):
     conn.executescript(DDL)
     audit.ensure(conn)
     notify.ensure(conn)
+    from . import otp
+    otp.ensure(conn)
     have = {r["name"] for r in conn.execute("PRAGMA table_info(cases)")}
     for col, typ in CASE_COLUMNS.items():
         if col not in have:

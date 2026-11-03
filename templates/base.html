@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ L or 'en' }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,31 +7,41 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+<a class="skip" href="#main">{{ t('skip_link') if t else 'Skip to main content' }}</a>
 <header class="top">
   <h1>Pension Integrity Monitor</h1>
-  <nav>
+  <nav aria-label="Main">
+    {% if session.get('user') %}
     <a href="{{ url_for('dashboard') }}">Dashboard</a>
-    {% if session.get('officer') %}
-    <a href="{{ url_for('ingest_page') }}">Ingestion</a>
     <a href="{{ url_for('queue') }}">Review queue</a>
     <a href="{{ url_for('appeals') }}">Appeals</a>
+    {% if session.get('role') == 'admin' %}
+    <a href="{{ url_for('ingest_page') }}">Ingestion</a>
+    <a href="{{ url_for('settings_page') }}">Settings</a>
+    {% endif %}
     <a href="{{ url_for('health_page') }}">Feed health</a>
     <a href="{{ url_for('feedback_page') }}">Feedback</a>
     <a href="{{ url_for('context_page') }}">Public data</a>
-    <a href="{{ url_for('settings_page') }}">Settings</a>
-    <a href="{{ url_for('logout') }}">Log out</a>
+    <form method="post" action="{{ url_for('logout') }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="linkbtn">Sign out ({{ session.get('user') }}, {{ session.get('role') }})</button>
+    </form>
     {% else %}
     <a href="{{ url_for('appeal_portal') }}">Family appeal portal</a>
     <a href="{{ url_for('context_page') }}">Public data context</a>
-    <a href="{{ url_for('login') }}">Officer sign in</a>
+    <a href="{{ url_for('login') }}">Staff sign in</a>
     {% endif %}
   </nav>
 </header>
-<main>
+<main id="main" tabindex="-1">
+<div role="status" aria-live="polite">
 {% if request.args.get('msg') %}<div class="msg">{{ request.args.get('msg') }}</div>{% endif %}
+</div>
+<div role="alert">
 {% if request.args.get('err') %}<div class="err">{{ request.args.get('err') }}</div>{% endif %}
+</div>
 {% block body %}{% endblock %}
 </main>
-<footer>Flags rank cases for human review only. This system never stops a pension by itself.</footer>
+<footer>Flags rank cases for human review only. This system never stops a pension by itself. Scores are uncalibrated review priority, not the chance that someone has died.</footer>
 </body>
 </html>

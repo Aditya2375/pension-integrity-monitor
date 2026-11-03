@@ -5,12 +5,14 @@
   <h2>Scoring settings</h2>
   <p class="muted">Priority threshold from costs: p* = C(false hold) / (C(false hold) + C(missed death)) = <b>{{ '%.3f'|format(p_star) }}</b>. These govern ranking only.</p>
   <form method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="grid">
       <div><label>Base rate (annual unreported-death prevalence)</label><input type="text" name="base_rate" value="{{ s['base_rate'] }}"></div>
       <div><label>Cost of a false hold</label><input type="text" name="cost_false_hold" value="{{ s['cost_false_hold'] }}"></div>
       <div><label>Cost of a missed death</label><input type="text" name="cost_missed_death" value="{{ s['cost_missed_death'] }}"></div>
       <div><label>Identity match threshold (0-1)</label><input type="text" name="match_threshold" value="{{ s['match_threshold'] }}"></div>
       <div><label>Appeal window (days)</label><input type="text" name="appeal_window_days" value="{{ s['appeal_window_days'] }}"></div>
+      <div><label>Notice period before suspension (days)</label><input type="text" name="notice_period_days" value="{{ s['notice_period_days'] }}"></div>
       <div><label>Bank inactivity (months)</label><input type="text" name="bank_inactivity_months" value="{{ s['bank_inactivity_months'] }}"></div>
       <div><label>Life certificate overdue (days)</label><input type="text" name="life_cert_overdue_days" value="{{ s['life_cert_overdue_days'] }}"></div>
       <div><label>Old-age signal (years)</label><input type="text" name="old_age_years" value="{{ s['old_age_years'] }}"></div>

@@ -120,6 +120,7 @@ DEFAULT_SETTINGS = {
     "cost_missed_death": "120000",
     "match_threshold": "0.75",
     "appeal_window_days": "30",
+    "notice_period_days": "30",
     "bank_inactivity_months": "12",
     "life_cert_overdue_days": "400",
     "old_age_years": "90",

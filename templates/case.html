@@ -1,103 +1,182 @@
 {% extends "base.html" %}
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endmacro %}
 {% block body %}
+{% set st = case['state'] %}
+{% set role = me.role %}
 <div class="card">
-  <h2>Case #{{ case['id'] }} - {{ case['name'] }} <span class="pill grey">{{ case['state'] }}</span></h2>
-  <p>
-    {{ case['pensioner_id'] }} &middot; {{ case['scheme'] }} &middot; {{ case['gender'] }} &middot; DoB {{ case['dob'] }}<br>
-    <span class="muted">{{ case['address'] or 'No address on record' }} &middot; Monthly pension {{ case['monthly_amount'] }}</span>
-  </p>
-  <p>Calibrated probability: <span class="prob">{{ '%.1f%%'|format(case['probability'] * 100) }}</span>
-  (log-odds {{ case['log_odds'] }}, base rate {{ case['base_rate'] }})</p>
-  {% if case['state'] == 'HELD' %}
-  <p class="muted">Held {{ case['held_at'] }} with reasons: {{ case['hold_reasons'] }}<br>
-  Appeal deadline: <b>{{ deadline }}</b></p>
-  {% endif %}
-  {% if case['state'] == 'RELEASED' %}
-  <p class="muted">Released {{ case['released_at'] }} with full arrears of <b>{{ '%0.2f'|format(case['arrears']) }}</b>.</p>
-  {% endif %}
+  <h2>Case #{{ case['id'] }}: {{ case['name'] }} <span class="pill grey">{{ st.replace('_',' ').title() }}</span></h2>
+  <p>{{ case['pensioner_id'] }} &middot; {{ case['scheme'] }} &middot; {{ case['gender'] }} &middot; Date of birth {{ case['dob'] }}<br>
+  <span class="muted">{{ case['address'] or 'No address on record' }} &middot; Monthly pension {{ case['monthly_amount'] }}</span></p>
+  <p>Review priority score: <b>{{ '%.2f'|format(case['probability']) }}</b>
+  <span class="muted">(uncalibrated; it orders the queue and is never a reason to stop a pension)</span></p>
+  <p>Payment recommendation to the payment system: <b>{{ (case['payment_status'] or 'ACTIVE').replace('_',' ').title() }}</b>
+  {% if sla %} &middot; Response due: {{ 'overdue' if sla[0] == 'overdue' else 'in %.1f days'|format(sla[1]) }}{% endif %}</p>
+  {% if case['notice_due_at'] and st == 'NOTICE' %}<p>Notice period ends <b>{{ case['notice_due_at'][:10] }}</b>. Payment continues until then.</p>{% endif %}
+  {% if case['hold_reasons'] %}<p class="muted">Reasons recorded: {{ case['hold_reasons'] }}</p>{% endif %}
+  {% if case['override_reason'] %}<p class="muted">Notice period shortened by a supervisor: {{ case['override_reason'] }}</p>{% endif %}
 </div>
 
 <div class="card">
-  <h2>Signals</h2>
+  <h2>Evidence</h2>
+  <p class="muted">Supporting and conflicting signals are shown together. Absent signals count as much as present ones.</p>
   <table>
-    <tr><th>Signal</th><th>Present</th><th>Log-LR contribution</th></tr>
+    <caption class="sr">Signals for this case</caption>
+    <thead><tr><th scope="col">Signal</th><th scope="col">Seen</th><th scope="col">Effect on priority</th></tr></thead>
+    <tbody>
     {% for s in sigs %}
-    <tr><td>{{ s['signal'].replace('_', ' ') }}</td><td>{{ 'yes' if s['present'] else 'no' }}</td><td>{{ s['value'] }}</td></tr>
+    {% set v = s['value']|float(0) %}
+    <tr><th scope="row">{{ s['signal'].replace('_', ' ') }}</th><td>{{ 'Yes' if s['present'] else 'No' }}</td>
+    <td>{{ 'Raises priority' if v > 0.05 else ('Lowers priority' if v < -0.05 else 'Little effect') }} <span class="muted">({{ s['value'] }})</span></td></tr>
     {% endfor %}
+    </tbody>
   </table>
+  {% if match %}
+  <h3>Death-registry match</h3>
+  <p>Registry entry {{ match['registration_no'] }}: name <b>{{ match['dname'] }}</b>, date of death {{ match['date_of_death'] }}, {{ match['registrar'] or 'district not given' }}.
+  Check it is the same person before relying on it.</p>
+  {% endif %}
 </div>
 
-{% if match %}
+{% if st in ['FLAGGED','UNDER_REVIEW','VERIFICATION'] %}
 <div class="card">
-  <h2>Death-registry match</h2>
-  <table>
-    <tr><th>Registration</th><th>Registry name</th><th>Date of death</th><th>District</th></tr>
-    <tr><td>{{ match['registration_no'] }}</td><td>{{ match['dname'] }}</td><td>{{ match['date_of_death'] }}</td><td>{{ match['registrar'] or '-' }}</td></tr>
-  </table>
+  <h2>Verification steps</h2>
+  <p class="muted">Every step must be done before a proposal can be made.</p>
+  {% if not ver %}<p class="err">No verification steps exist for this case, so it cannot move forward. Ask an administrator to re-run the pipeline.</p>{% endif %}
+  {% for v in ver %}
+  <form method="post" action="{{ url_for('verify', cid=case['id']) }}" class="row">
+    {{ csrf() }}
+    <input type="hidden" name="vid" value="{{ v['id'] }}">
+    <input type="hidden" name="done" value="{{ 0 if v['done'] else 1 }}">
+    <span class="grow">{{ 'Done: ' if v['done'] else 'To do: ' }}{{ v['step'] }}{% if v['note'] %} <span class="muted">({{ v['note'] }})</span>{% endif %}</span>
+    {% if role == 'officer' %}
+    <label class="sr" for="n{{ v['id'] }}">Note</label>
+    <input id="n{{ v['id'] }}" type="text" name="note" placeholder="note" maxlength="500">
+    <button class="btn ghost">{{ 'Reopen' if v['done'] else 'Mark done' }}</button>
+    {% endif %}
+  </form>
+  {% endfor %}
+  {% if role == 'officer' and st == 'FLAGGED' %}
+  <form method="post" action="{{ url_for('case_start', cid=case['id']) }}">{{ csrf() }}<button class="btn ghost">Start review</button></form>
+  {% endif %}
+</div>
+{% if role == 'officer' %}
+<div class="card">
+  <h2>Officer decision</h2>
+  <p class="muted">This does not change anything for the pensioner. It asks a supervisor to look again.</p>
+  <form method="post" action="{{ url_for('case_propose', cid=case['id']) }}">
+    {{ csrf() }}
+    <label for="reason">Written reasons (kept on the case and explained to the family on request)</label>
+    <textarea id="reason" name="reason" required maxlength="4000"></textarea>
+    <p><button class="btn warn" name="kind" value="hold">Propose a payment hold</button>
+    <button class="btn warn" name="kind" value="confirm_death">Propose confirming a death</button></p>
+  </form>
+  <form method="post" action="{{ url_for('dismiss', cid=case['id']) }}">
+    {{ csrf() }}
+    <label for="dnote">Or dismiss as a false alarm (reason required)</label>
+    <input id="dnote" type="text" name="note" required maxlength="500">
+    <p><button class="btn ghost">Dismiss case</button></p>
+  </form>
+</div>
+{% endif %}
+{% endif %}
+
+{% if pending %}
+<div class="card">
+  <h2>Waiting for a second person</h2>
+  <p>{{ pending['proposer'] }} proposed: <b>{{ 'a payment hold' if pending['kind'] == 'hold' else 'confirming a death' }}</b>.<br>Reasons: {{ pending['reason'] }}</p>
+  {% if role == 'supervisor' %}
+    {% if pending['proposer'] == me.username %}
+    <p class="muted">You made this proposal, so someone else must decide it.</p>
+    {% else %}
+    <form method="post" action="{{ url_for('case_decide', cid=case['id']) }}">
+      {{ csrf() }}
+      <label for="dn">Note (required if you send it back)</label>
+      <input id="dn" type="text" name="note" maxlength="500">
+      <p><button class="btn" name="verdict" value="approve">Approve</button>
+      <button class="btn ghost" name="verdict" value="reject">Send back</button></p>
+    </form>
+    {% endif %}
+  {% endif %}
 </div>
 {% endif %}
 
-{% if case['state'] in ['FLAGGED','UNDER_REVIEW','VERIFICATION'] %}
+{% if st in ['NOTICE','HELD'] and role == 'supervisor' %}
 <div class="card">
-  <h2>Verification steps</h2>
-  <p class="muted">Every step must be completed before a hold is possible.</p>
-  {% for v in ver %}
-  <form method="post" action="{{ url_for('verify', cid=case['id']) }}" style="display:flex;gap:10px;align-items:center;margin:8px 0;flex-wrap:wrap">
-    <input type="hidden" name="vid" value="{{ v['id'] }}">
+  <h2>Supervisor actions</h2>
+  {% if st == 'NOTICE' %}
+  <form method="post" action="{{ url_for('case_suspend', cid=case['id']) }}">
+    {{ csrf() }}
+    <label for="ov">Suspend payment. Allowed once the notice period has ended. To shorten it, give a written reason.</label>
+    <input id="ov" type="text" name="override_reason" maxlength="500">
+    <p><button class="btn warn">Recommend suspension</button></p>
+  </form>
+  {% endif %}
+  <form method="post" action="{{ url_for('release', cid=case['id']) }}">
+    {{ csrf() }}
+    <label for="rn">Release: the evidence clears the pensioner (reason required)</label>
+    <input id="rn" type="text" name="note" required maxlength="500">
+    <p><button class="btn">Release and request reinstatement</button></p>
+  </form>
+</div>
+{% endif %}
+
+{% if st == 'APPEAL_REVIEW' %}
+<div class="card">
+  <h2>Appeal under review</h2>
+  <p>Payment is provisionally restored while this is decided. The decision must come from a supervisor who took no part in the first decision.</p>
+  {% if role == 'supervisor' and me.username not in [case['proposed_by'], case['approved_by']] %}
+  <form method="post" action="{{ url_for('appeal_decision', cid=case['id']) }}">
+    {{ csrf() }}
+    <label for="an">Decision, in writing (shared with the family)</label>
+    <textarea id="an" name="note" required maxlength="2000"></textarea>
+    <p><button class="btn" name="verdict" value="reverse">Accept appeal, reinstate</button>
+    <button class="btn warn" name="verdict" value="uphold">Keep the decision</button></p>
+  </form>
+  {% elif role == 'supervisor' %}<p class="muted">You took part in the original decision, so another supervisor must decide this appeal.</p>{% endif %}
+</div>
+{% endif %}
+
+{% if st == 'SURVIVOR_ROUTING' or survivor %}
+<div class="card">
+  <h2>Survivor and family pension routing</h2>
+  {% for v in survivor %}
+  <form method="post" action="{{ url_for('survivor_step', cid=case['id'], sid=v['id']) }}" class="row">
+    {{ csrf() }}
     <input type="hidden" name="done" value="{{ 0 if v['done'] else 1 }}">
-    <span style="flex:1;min-width:260px">{{ '✔' if v['done'] else '○' }} {{ v['step'] }}{% if v['note'] %} <span class="muted">({{ v['note'] }})</span>{% endif %}</span>
-    <input type="text" name="note" placeholder="note" style="max-width:220px">
-    <button class="btn ghost">{{ 'Reopen' if v['done'] else 'Mark done' }}</button>
+    <span class="grow">{{ 'Done: ' if v['done'] else 'To do: ' }}{{ v['step'] }}</span>
+    {% if role == 'officer' and st == 'SURVIVOR_ROUTING' %}<button class="btn ghost">{{ 'Reopen' if v['done'] else 'Mark done' }}</button>{% endif %}
   </form>
   {% endfor %}
 </div>
-
-<div class="card">
-  <h2>Officer decision</h2>
-  <h3>Hold the pension</h3>
-  <form method="post" action="{{ url_for('hold', cid=case['id']) }}">
-    <label>Written reasons (required; shared with the family on request)</label>
-    <textarea name="reasons" required></textarea>
-    <p><button class="btn warn">Hold with reasons</button></p>
-  </form>
-  <h3>Dismiss the flag</h3>
-  <form method="post" action="{{ url_for('dismiss', cid=case['id']) }}" style="display:flex;gap:10px;flex-wrap:wrap">
-    <input type="text" name="note" placeholder="why the flag is wrong" style="max-width:320px">
-    <button class="btn ghost">Dismiss</button>
-  </form>
-</div>
 {% endif %}
 
-{% if case['state'] == 'HELD' %}
+{% if appeals or reinst or evidence %}
 <div class="card">
-  <h2>Release</h2>
-  <p class="muted">Release restores the pension and pays full arrears for every day held.</p>
-  <form method="post" action="{{ url_for('release', cid=case['id']) }}"><button class="btn">Release with full arrears</button></form>
+  <h2>Family appeal and reinstatement</h2>
+  {% for a in appeals %}
+  <p><b>{{ a['status'] }}</b> &middot; reference <code>{{ a['tracking_id'] }}</code> &middot; {{ a['submitted_at'] }}<br>
+  {{ a['statement'] }}{% if a['decision'] %}<br><span class="muted">Decision: {{ a['decision'] }}</span>{% endif %}</p>
+  {% endfor %}
+  {% for e in evidence %}<p><a href="{{ url_for('evidence_file', eid=e['id']) }}">Evidence file {{ e['id'] }}</a> <span class="muted">({{ e['mime'] }}, {{ e['size'] // 1024 }} KB, SHA-256 {{ e['sha256'][:12] }}...)</span></p>{% endfor %}
+  {% for r in reinst %}<p>Reinstatement request ({{ r['kind'].lower() }}): {{ r['status'].lower() }}, arrears due {{ '%.2f'|format(r['arrears_due']) }}. <span class="muted">This system records the request. The payer confirms the payment.</span></p>{% endfor %}
 </div>
 {% endif %}
 
 <div class="card">
-  <h2>Verified outcome</h2>
-  <p class="muted">The verified outcome recalibrates signal weights for future cases.</p>
-  <form method="post" action="{{ url_for('outcome', cid=case['id']) }}" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
-    <select name="outcome" style="max-width:220px">
-      <option value="confirmed_deceased">Confirmed deceased</option>
-      <option value="confirmed_alive">Confirmed alive</option>
-    </select>
-    <input type="text" name="note" placeholder="evidence note" style="max-width:320px">
-    <button class="btn">Record outcome</button>
+  <h2>Notes and history</h2>
+  {% for n in notes %}<p><b>{{ n['author'] }}</b> <span class="muted">{{ n['ts'] }}</span><br>{{ n['body'] }}</p>{% endfor %}
+  {% if role == 'officer' %}
+  <form method="post" action="{{ url_for('case_note', cid=case['id']) }}">
+    {{ csrf() }}
+    <label for="nb">Add a note</label><textarea id="nb" name="body" maxlength="4000" required></textarea>
+    <p><button class="btn ghost">Add note</button></p>
   </form>
-</div>
-
-{% if appeals %}
-<div class="card">
-  <h2>Appeal trail</h2>
+  {% endif %}
+  <h3>Audit trail</h3>
   <table>
-    <tr><th>Tracking ID</th><th>Submitted</th><th>Status</th><th>Statement</th></tr>
-    {% for a in appeals %}
-    <tr><td><code>{{ a['tracking_id'] }}</code></td><td>{{ a['submitted_at'] }}</td><td>{{ a['status'] }}</td><td>{{ a['statement'] }}</td></tr>
-    {% endfor %}
+    <caption class="sr">Tamper-evident history of this case</caption>
+    <thead><tr><th scope="col">When (UTC)</th><th scope="col">Who</th><th scope="col">What</th></tr></thead>
+    <tbody>{% for e in trail %}<tr><td>{{ e['ts'] }}</td><td>{{ e['actor'] }}</td><td>{{ e['action'].replace('_',' ').replace(':',': ') }}</td></tr>{% endfor %}</tbody>
   </table>
 </div>
-{% endif %}
 {% endblock %}

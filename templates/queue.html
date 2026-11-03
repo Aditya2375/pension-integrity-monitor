@@ -1,25 +1,37 @@
 {% extends "base.html" %}
 {% block body %}
 <div class="card">
-  <h2>Officer review queue</h2>
-  <p class="muted">Ranked by calibrated probability. Priority line: p* = {{ '%.2f'|format(p_star) }} from the configured costs. This queue never holds a pension; officers do, after verification, with written reasons.</p>
+  <h2>Review queue</h2>
+  <p class="muted">Ranked by review priority score (uncalibrated: it orders the work, it is not the chance of death). Cases above the cost line are marked priority. This queue never holds a pension. A named officer proposes, a different supervisor approves, and the family gets a notice period first.</p>
+  <form method="get" class="filters">
+    <label for="state">Show state</label>
+    <select id="state" name="state" onchange="this.form.submit()">
+      <option value="">All open</option>
+      {% for s in states %}<option value="{{ s }}" {{ 'selected' if s == f_state }}>{{ s.replace('_',' ').title() }}</option>{% endfor %}
+    </select>
+    <noscript><button class="btn ghost">Filter</button></noscript>
+  </form>
   {% if rows %}
   <table>
-    <tr><th>Case</th><th>Pensioner</th><th>Scheme</th><th>Monthly</th><th>Probability</th><th>State</th><th></th></tr>
+    <caption class="sr">Open cases ranked by review priority</caption>
+    <thead><tr><th scope="col">Case</th><th scope="col">Pensioner</th><th scope="col">Scheme</th><th scope="col">Monthly</th><th scope="col">Review priority</th><th scope="col">State</th><th scope="col">Due</th><th scope="col"><span class="sr">Open</span></th></tr></thead>
+    <tbody>
     {% for c in rows %}
     <tr>
-      <td>#{{ c['id'] }}</td>
+      <th scope="row">#{{ c['id'] }}</th>
       <td>{{ c['name'] }}<br><span class="muted">{{ c['pensioner_id'] }}</span></td>
       <td>{{ c['scheme'] }}</td>
       <td>{{ c['monthly_amount'] }}</td>
-      <td class="prob">{{ '%.1f%%'|format(c['probability'] * 100) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
-      <td>{{ c['state'] }}</td>
-      <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Review</a></td>
+      <td>{{ '%.2f'|format(c['probability']) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
+      <td>{{ c['state'].replace('_',' ').title() }}</td>
+      <td>{% if c['sla'] %}<span class="pill {{ 'warn' if c['sla'][0] == 'overdue' else 'grey' }}">{{ 'Overdue' if c['sla'][0] == 'overdue' else ('Due soon' if c['sla'][0] == 'due_soon' else 'On time') }}</span>{% endif %}</td>
+      <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Review<span class="sr"> case {{ c['id'] }}</span></a></td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
   {% else %}
-  <div class="empty"><b>The queue is empty.</b><br>Load feeds and run the pipeline to generate ranked cases.</div>
+  <div class="empty"><b>The queue is empty.</b><br>Cases appear when the detector flags a pensioner for review.</div>
   {% endif %}
 </div>
 {% endblock %}

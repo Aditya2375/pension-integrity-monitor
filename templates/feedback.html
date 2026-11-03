@@ -4,7 +4,8 @@
   <h2>Outcome feedback</h2>
   <p class="muted">Confirmed outcomes recalibrate the signal likelihood ratios and the base rate (Laplace-smoothed). At least 5 resolved cases are required.</p>
   <p>Confirmed deceased: <b>{{ stats.get('confirmed_deceased', 0) }}</b> &middot; Confirmed alive: <b>{{ stats.get('confirmed_alive', 0) }}</b></p>
-  <form method="post" action="{{ url_for('recalibrate') }}"><button class="btn">Recalibrate from outcomes</button></form>
+  <form method="post" action="{{ url_for('recalibrate') }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn">Recalibrate from outcomes</button></form>
 </div>
 <div class="card">
   <h2>Current signal weights</h2>
