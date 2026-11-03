@@ -152,6 +152,7 @@ class Actor:
     def __init__(self, username, role, jurisdictions=("NA",)):
         self.username, self.role = username, role
         self.jurisdictions = frozenset(jurisdictions)
+        self.registered = False
 
     def principal(self):
         r = ROLE_MAP.get(self.role)
@@ -163,12 +164,22 @@ def jurisdiction_of(conn, case):
     return (r["state"] if r and r["state"] else "NA")
 
 
-def _need(conn, actor, action, case):
-    # Re-check the account inside the transaction: a revoked or re-roled user
-    # cannot finish an action that was started before the change.
+def fresh_actor(conn, actor):
+    """The actor as the users table says it is now. Actors that came from the
+    users table (registered) must still exist and be active; the authority used
+    is always the freshly read role and jurisdictions, never the cached ones."""
     row = conn.execute("SELECT role, active, jurisdictions FROM users WHERE username=?", (actor.username,)).fetchone()
-    if row is not None and (not row["active"] or row["role"] != actor.role):
+    if row is None:
+        if getattr(actor, "registered", False):
+            raise WorkflowError(f"'{actor.username}' is no longer a registered user")
+        return actor            # in-process helper actors, used by workflow tests only
+    if not row["active"] or row["role"] != actor.role:
         raise WorkflowError(f"'{actor.username}' is no longer authorised")
+    return Actor(actor.username, row["role"], tuple(filter(None, (row["jurisdictions"] or "").split("|"))))
+
+
+def _need(conn, actor, action, case):
+    actor = fresh_actor(conn, actor)
     if not identity.authorized(actor.principal(), action, jurisdiction_of(conn, case)):
         raise WorkflowError(f"'{actor.username}' ({actor.role}) is not authorised for {action} on this case")
 

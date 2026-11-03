@@ -57,4 +57,6 @@ def get(conn, username):
     r = conn.execute("SELECT * FROM users WHERE username=? AND active=1", (username or "",)).fetchone()
     if not r:
         return None
-    return workflow.Actor(r["username"], r["role"], tuple(filter(None, (r["jurisdictions"] or "").split("|"))))
+    a = workflow.Actor(r["username"], r["role"], tuple(filter(None, (r["jurisdictions"] or "").split("|"))))
+    a.registered = True
+    return a

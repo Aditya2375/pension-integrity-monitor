@@ -200,3 +200,38 @@ def test_late_intake_refused_while_period_open(fresh_db):
     with pytest.raises(WorkflowError):
         wf.accept_late_appeal(c, cid, SUP("s2"), "ILLNESS", "x")
     c.close()
+
+
+def _http_case():
+    cid = make_case()
+    return cid
+
+
+@pytest.mark.parametrize("change", ["UPDATE users SET jurisdictions='KA' WHERE username='rev1'",
+                                    "UPDATE users SET role='auditor' WHERE username='rev1'",
+                                    "UPDATE users SET active=0 WHERE username='rev1'",
+                                    "DELETE FROM users WHERE username='rev1'"])
+def test_http_scope_change_between_guard_and_lock(fresh_db, monkeypatch, change):
+    from conftest import as_user
+    cid = make_case()
+    cl = as_user("rev1")
+    orig = wf._lock
+    def swapped(conn):
+        other = db.connect(); other.execute(change); other.commit(); other.close()
+        return orig(conn)
+    monkeypatch.setattr(wf, "_lock", swapped)
+    r = cl.post(f"/case/{cid}/propose", {"kind": "hold", "reason": "r"}, csrf=f"/case/{cid}")
+    monkeypatch.setattr(wf, "_lock", orig)
+    c = db.connect()
+    assert c.execute("SELECT state FROM cases WHERE id=?", (cid,)).fetchone()[0] == "VERIFICATION"
+    assert c.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 0
+    c.close()
+
+
+def test_registered_actor_missing_from_table_is_denied(fresh_db):
+    cid = make_case()
+    a = OFF("ghost"); a.registered = True
+    c = db.connect()
+    with pytest.raises(WorkflowError):
+        wf.propose(c, cid, "hold", a, "r")
+    c.close()
