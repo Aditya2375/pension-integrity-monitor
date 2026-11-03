@@ -32,3 +32,7 @@ Bandit on app.py, pim/, scripts/, security/: three B608 medium findings at pim/i
 ## Before final sign-off
 
 Re-run all tests on combined frozen commit; inspect app/template diff; test CSRF, proxy spoofing, shared rate limits, all missing IDs, state transitions, immutable-feed digests, appeal/reinstatement atomicity, export injection and unsafe settings. Scan exact full dependency set including detector/native packages; inspect no personal artifacts in candidate git tree/history. Verify actual TLS/cache/headers and public synthetic-only UI pixels. Require independent penetration/accessibility testing for department hosting. Sign-off must state commit, deployment mode, exclusions, tests, findings, owner and expiry/review trigger.
+
+## Detection branch follow-up: 2945905
+
+Experimental v3/v4 loaders directly call pickle.load on CLI-supplied model/aggregate paths; code does not enforce the README's hash-verification statement. Keep frozen validation scripts isolated/trusted/offline during blind rounds. Production needs a separate constrained runner, independently provisioned digest allowlist and verified exact bytes before any deserialization, or a non-executable format. `security.artifacts.verified_bytes` supplies only read-once size/hash verification, not a safe pickle loader. Full numpy/pandas/model/native dependency lock/SBOM is still outside the root runtime inventory. Hardcoded /downloads import paths also prevent portable reproduction. None of this implies an observed compromise.

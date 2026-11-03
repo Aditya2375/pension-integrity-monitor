@@ -72,3 +72,16 @@ def test_chain_changes_truncation_and_rollback():
 @pytest.mark.parametrize('value', ['=cmd()', '+1', '-2', '@SUM(1)', '\t=1', '  =1'])
 def test_csv_formula_neutralization(value):
     assert csv_cell(value).startswith("'")
+
+def test_artifact_digest_and_size(tmp_path):
+    import hashlib
+    from security.artifacts import verified_bytes
+    p = tmp_path / 'artifact.bin'
+    p.write_bytes(b'synthetic-artifact')
+    digest = hashlib.sha256(p.read_bytes()).hexdigest()
+    assert verified_bytes(p, digest, 100) == b'synthetic-artifact'
+    for bad_digest in ('', '0' * 64):
+        with pytest.raises(ValueError):
+            verified_bytes(p, bad_digest, 100)
+    with pytest.raises(ValueError):
+        verified_bytes(p, digest, 2)
