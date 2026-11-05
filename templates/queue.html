@@ -16,7 +16,7 @@
       <td>{{ c['scheme'] }}</td>
       <td>{{ c['monthly_amount'] }}</td>
       <td class="prob">{{ '%.1f%%'|format(c['probability'] * 100) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
-      <td>{{ c['state'] }}</td>
+      <td>{{ c['state'] }}{% if c['audit'] %} <span class="pill grey">audit sample</span>{% endif %}</td>
       <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Review</a></td>
     </tr>
     {% endfor %}

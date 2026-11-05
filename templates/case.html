@@ -37,7 +37,7 @@
 </div>
 {% endif %}
 
-{% if case['state'] in ['FLAGGED','UNDER_REVIEW','VERIFICATION'] %}
+{% if case['state'] in ['FLAGGED','UNDER_REVIEW','VERIFICATION','HOLD_PENDING'] %}
 <div class="card">
   <h2>Verification steps</h2>
   <p class="muted">Every step must be completed before a hold is possible.</p>
@@ -54,17 +54,40 @@
 
 <div class="card">
   <h2>Officer decision</h2>
-  <h3>Hold the pension</h3>
+  <h3>Request a hold</h3>
+  <p class="muted">Dual control: a hold only takes effect after a <b>different</b> officer approves it. Reasons must be case-specific (at least 40 characters); copied boilerplate is rejected.</p>
+  {% if case['state'] == 'HOLD_PENDING' and pending %}
+  <p class="muted">Hold already requested by <b>{{ pending['requester'] }}</b> at {{ pending['requested_at'] }}; awaiting a second officer's decision below.</p>
+  {% else %}
   <form method="post" action="{{ url_for('hold', cid=case['id']) }}">
     <label>Written reasons (required; shared with the family on request)</label>
     <textarea name="reasons" required></textarea>
-    <p><button class="btn warn">Hold with reasons</button></p>
+    <p><button class="btn warn">Request hold</button></p>
   </form>
+  {% endif %}
   <h3>Dismiss the flag</h3>
   <form method="post" action="{{ url_for('dismiss', cid=case['id']) }}" style="display:flex;gap:10px;flex-wrap:wrap">
     <input type="text" name="note" placeholder="why the flag is wrong" style="max-width:320px">
     <button class="btn ghost">Dismiss</button>
   </form>
+</div>
+{% endif %}
+
+{% if case['state'] == 'HOLD_PENDING' and pending %}
+<div class="card">
+  <h2>Pending hold - second officer decision</h2>
+  <p class="muted">Requested by <b>{{ pending['requester'] }}</b> at {{ pending['requested_at'] }}.</p>
+  <p>Reasons given: {{ pending['reasons'] }}</p>
+  {% if pending['requester'] == officer_name %}
+  <p class="err">You requested this hold. Dual control requires a different officer to approve or reject it; sign in under another officer name.</p>
+  {% else %}
+  <form method="post" action="{{ url_for('approve_hold', cid=case['id']) }}" style="display:inline">
+    <button class="btn warn">Approve hold (I am a different officer)</button>
+  </form>
+  <form method="post" action="{{ url_for('reject_hold', cid=case['id']) }}" style="display:inline;margin-left:10px">
+    <button class="btn ghost">Reject hold request</button>
+  </form>
+  {% endif %}
 </div>
 {% endif %}
 

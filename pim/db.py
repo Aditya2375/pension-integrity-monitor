@@ -110,8 +110,19 @@ CREATE TABLE IF NOT EXISTS public_context (
 );
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts TEXT, actor TEXT, action TEXT, detail TEXT
+  ts TEXT, actor TEXT, action TEXT, detail TEXT,
+  prev_hash TEXT, hash TEXT
 );
+CREATE TABLE IF NOT EXISTS hold_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_id INTEGER, requester TEXT, reasons TEXT, requested_at TEXT,
+  state TEXT DEFAULT 'PENDING', snapshot_hash TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit
+BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
+BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 """
 
 DEFAULT_SETTINGS = {
@@ -123,6 +134,9 @@ DEFAULT_SETTINGS = {
     "bank_inactivity_months": "12",
     "life_cert_overdue_days": "400",
     "old_age_years": "90",
+    "max_new_cases_per_run": "500",
+    "appeal_response_sla_days": "14",
+    "audit_sample_rate": "0.001",
 }
 
 DEFAULT_WEIGHTS = {
@@ -204,6 +218,31 @@ def set_setting(conn, key, value):
     conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
 
 def log(conn, actor, action, detail=""):
+    """Append-only, hash-chained audit entry: each row commits to the previous
+    row's hash, so later edits or deletions are detectable by verify_audit()."""
+    import hashlib
     from datetime import datetime
-    conn.execute("INSERT INTO audit(ts,actor,action,detail) VALUES(?,?,?,?)",
-                 (datetime.utcnow().isoformat(timespec="seconds") + "Z", actor, action, detail))
+    prev = conn.execute("SELECT hash FROM audit ORDER BY id DESC LIMIT 1").fetchone()
+    prev_hash = prev["hash"] if prev else "GENESIS"
+    ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    body = f"{prev_hash}|{ts}|{actor}|{action}|{detail}"
+    h = hashlib.sha256(body.encode()).hexdigest()
+    conn.execute("INSERT INTO audit(ts,actor,action,detail,prev_hash,hash) VALUES(?,?,?,?,?,?)",
+                 (ts, actor, action, detail, prev_hash, h))
+
+def verify_audit(conn):
+    """Replay the hash chain. Returns (ok, first_bad_id_or_none, entries)."""
+    import hashlib
+    rows = conn.execute("SELECT id,ts,actor,action,detail,prev_hash,hash FROM audit ORDER BY id").fetchall()
+    prev = "GENESIS"
+    for r in rows:
+        if r["hash"] is None:  # pre-chain legacy row
+            prev = r["prev_hash"] or prev
+            continue
+        if r["prev_hash"] != prev:
+            return False, r["id"], len(rows)
+        body = f"{prev}|{r['ts']}|{r['actor']}|{r['action']}|{r['detail']}"
+        if hashlib.sha256(body.encode()).hexdigest() != r["hash"]:
+            return False, r["id"], len(rows)
+        prev = r["hash"]
+    return True, None, len(rows)

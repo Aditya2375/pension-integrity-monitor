@@ -46,6 +46,16 @@ def recalibrate(conn):
     db.log(conn, "feedback", "recalibrate", f"resolved={len(resolved)} (base rate unchanged)")
     return None, f"recalibrated LRs from {len(resolved)} resolved cases; base rate unchanged"
 
+def audit_stats(conn):
+    """Outcomes of randomized audit-sample cases only. This is the unbiased
+    stream: it estimates the death rate among pensioners the system did NOT
+    flag, which flagged-case resolutions can never measure."""
+    rows = conn.execute(
+        "SELECT cases.outcome, COUNT(*) n FROM cases "
+        "JOIN signals s ON s.case_id=cases.id AND s.signal='audit_sample' "
+        "WHERE cases.outcome IS NOT NULL GROUP BY cases.outcome").fetchall()
+    return {r["outcome"]: r["n"] for r in rows}
+
 def stats(conn):
     rows = conn.execute(
         "SELECT outcome, COUNT(*) n FROM cases WHERE outcome IS NOT NULL GROUP BY outcome").fetchall()

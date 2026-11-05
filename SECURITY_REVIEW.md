@@ -50,3 +50,29 @@ Android items 29-39: not applicable; this project has no APK, relay, or update c
 Python tool items 40-45: 40 credentials from env only (PIM_OFFICER_KEY, PIM_SECRET, PIM_DB); gitleaks clean. 41 the monitor logs in to nothing external; it only receives uploads. 42 logs: the audit table records actions, no personal payloads; uploaded CSVs are not logged; grep for personal data in repo and logs clean. 43 parsing: csv module only, no yaml/pickle, no outbound HTTP. 44 no GitHub Actions in this repo. 45 no alert channels.
 
 Bandit triage detail: B104 binding (fixed: localhost default, env override); B101 in pim/feedback.py (fixed: real ValueError); B101 in tests (fine); B306 mktemp in tests only (fine); B608 x3 (reviewed: parameter placeholders and internal constants only).
+
+## Addendum 2026-11-05: officer-gaming and integrity safeguards
+
+- Audit log is now hash-chained (each entry commits to the previous entry's SHA-256). The dashboard replays the chain on every load and shows TAMPER DETECTED with the first broken entry if history is edited or deleted. Limit: it detects, not prevents, tampering by someone with database write access; shipping the log to an external store is the stronger control and is not built.
+- Holds are dual-control: the requesting officer's hold only pends the case; approval requires a different officer name signed in. Officer name is self-declared at sign-in (single shared officer key); this is process dual control, not strong per-officer identity. Real per-officer accounts are the known follow-up.
+- Hold reasons must be at least 40 characters and are rejected if identical to reasons on any other case or pending request (boilerplate guard).
+- Queue-flooding circuit breaker: one run creating more than `max_new_cases_per_run` new cases halts further case creation, logs a loud `circuit_breaker` audit entry, and surfaces a warning. Nothing is ever auto-held.
+- Randomized audit sampling (`audit_sample_rate`) puts a small random share of unflagged still-paid pensioners into the queue as labelled audit-sample cases; their outcomes are the unbiased stream that estimates what flags miss.
+- Appeals open past `appeal_response_sla_days` are marked overdue on the appeals page.
+- Test suite extended: tamper detection, breaker, audit sampling, overdue marker, dual control, boilerplate rejection (tests/test_safeguards.py, tests/test_flow.py). All tests pass.
+
+## Addendum 2026-11-05 (2): hostile-review round 2 fixes
+
+Two external hostile reviews of the first safeguards round found the same core weaknesses. What was fixed in code, and what stays a documented limit:
+
+Fixed in code:
+- Audit log UPDATE/DELETE is now blocked by database triggers, not just detected after the fact. If the triggers are dropped and history rewritten, the hash chain still detects it (tested both ways).
+- Hold approval now binds to a hash of the exact evidence snapshot (signals, verification state, score) the requesting officer saw; any change voids the request before approval.
+- Boilerplate guard now catches near-duplicates (similarity >= 0.85), not only exact copies.
+- A cumulative drip-flood watch warns when recent pipeline runs together exceed 3x the per-run cap, covering flooding that stays under the cap each run.
+
+Still documented limits, honestly stated:
+- Officer identity is self-declared at sign-in behind a single shared officer key. Dual control is process dual control; one motivated person can sign in twice under two names. Real per-officer accounts are the follow-up and are not built.
+- The hash chain detects only tampering that does not recompute the whole chain. An attacker with full database write access who rewrites and re-chains the log defeats it; external hash shipping is the stronger control and is not built.
+- Audit sampling at 0.1% has low statistical power on small rolls; the estimate of missed deaths is only meaningful as volume grows.
+- The boilerplate guard checks text similarity, not whether the reasons are supported by the evidence.

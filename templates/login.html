@@ -6,6 +6,8 @@
   <form method="post">
     <label>Officer key</label>
     <input type="password" name="key" autofocus>
+    <label style="margin-top:12px">Officer name or ID (used for dual control and the audit log)</label>
+    <input type="text" name="officer_name" maxlength="40" placeholder="e.g. R. Sharma">
     <p style="margin-top:14px"><button class="btn">Sign in</button></p>
   </form>
   <p class="muted">Family members do not need to sign in. Use the <a href="{{ url_for('appeal_portal') }}">appeal portal</a> with your tracking ID.</p>

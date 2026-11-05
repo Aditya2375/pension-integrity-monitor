@@ -4,6 +4,7 @@
   <h2>Outcome feedback</h2>
   <p class="muted">Confirmed outcomes recalibrate the signal likelihood ratios (Laplace-smoothed) after at least 30 resolved cases with 5+ of each outcome. The base rate is never updated from resolved cases, and unresolved cases never count as negative.</p>
   <p>Confirmed deceased: <b>{{ stats.get('confirmed_deceased', 0) }}</b> &middot; Confirmed alive: <b>{{ stats.get('confirmed_alive', 0) }}</b></p>
+  <p class="muted">Randomized audit samples (unbiased stream): confirmed deceased <b>{{ audit.get('confirmed_deceased', 0) }}</b>, confirmed alive <b>{{ audit.get('confirmed_alive', 0) }}</b>. The deceased share of audit samples estimates the death rate among pensioners the system never flagged - the only honest measure of what the flags miss.</p>
   <form method="post" action="{{ url_for('recalibrate') }}"><button class="btn">Recalibrate from outcomes</button></form>
 </div>
 <div class="card">

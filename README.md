@@ -5,7 +5,7 @@ Live: https://pension-integrity-monitor.onrender.com (free tier; sleeps when idl
 
 Ranks pensioners for human review when public-record signals suggest a death may have gone unreported, and manages the full officer review, family appeal and outcome-feedback loop around that ranking.
 
-The system never stops a pension by itself. Flags only order a review queue. A pension is held only by an officer, only after every verification step is complete, and only with written reasons. Families get a tracking ID, a deadline and a public appeal portal. A release pays full arrears for every day held.
+The system never stops a pension by itself. Flags only order a review queue. A pension is held only after every verification step is complete, written case-specific reasons are recorded, and a second officer approves the hold (dual control). Families get a tracking ID, a deadline and a public appeal portal. A release pays full arrears for every day held. Every action lands in a tamper-evident hash-chained audit log.
 
 ## What it does
 
@@ -15,8 +15,11 @@ The system never stops a pension by itself. Flags only order a review queue. A p
 - **Cost-based priority threshold**: p* = C(false hold) / (C(false hold) + C(missed death)). It ranks the queue; it triggers no action.
 - **Officer review queue** ordered by calibrated probability, with the full signal breakdown and the matched registry entry on each case.
 - **Verification steps** (registrar cross-check, field visit, family contact, bank confirmation) that must all complete before a hold is possible.
-- **Hold with mandatory written reasons**, a family tracking ID and an appeal deadline.
-- **Family appeal portal** (public, no sign-in): look up a tracking ID, see case status and deadline, submit an appeal. Officers resolve appeals from the appeals page.
+- **Dual-control holds**: a hold request only marks the case pending; a *different* officer must approve it before anything is held. Approval binds to the evidence snapshot the requester saw: if signals, verification state or the score change before approval, the request is voided and must be re-requested against current evidence. Written reasons are mandatory (minimum length, and reused or near-identical boilerplate from another case is rejected), a family tracking ID and appeal deadline are issued on approval.
+- **Tamper-evident audit log**: every officer and pipeline action is appended to a hash-chained log, and database triggers block UPDATE and DELETE on the log outright. The dashboard replays the chain on every load; any edit or deletion of past entries (even by someone who drops the triggers) shows as TAMPER DETECTED.
+- **Queue-flooding circuit breaker and drip watch**: if one pipeline run would create more new cases than a configured cap (`max_new_cases_per_run`, default 500), case creation stops, a loud audit entry and queue warning say to investigate feed integrity, and nothing is held automatically. A cumulative watch also warns when recent runs together exceed 3x the cap, catching flooding that drips in under the per-run cap.
+- **Randomized audit sampling**: a small configurable share (`audit_sample_rate`, default 0.1%) of still-paid, unflagged pensioners enters the queue labelled "audit sample" each run. Their verified outcomes are the only unbiased ground-truth stream: the deceased share among them estimates what the flags miss, which flagged-case resolutions can never measure.
+- **Family appeal portal** (public, no sign-in): look up a tracking ID, see case status and deadline, submit an appeal. Officers resolve appeals from the appeals page; appeals open longer than the response SLA (`appeal_response_sla_days`, default 14) are marked overdue.
 - **Release with full arrears**, computed from days held and monthly pension.
 - **Outcome feedback**, guarded against feedback-loop bias: verified outcomes recalibrate the signal likelihood ratios with Laplace smoothing only after at least 30 resolved cases with 5+ of each outcome. The configured base rate is never updated from resolved cases (they are a selected sample), and unresolved cases never count as negative.
 - **Feed-health monitoring**: each feed is marked ok, stale or never loaded against its expected cadence.

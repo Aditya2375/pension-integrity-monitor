@@ -66,6 +66,8 @@ def login():
         elif secrets.compare_digest(request.form.get("key") or "", OFFICER_KEY):
             session.clear()
             session["officer"] = True
+            name = (request.form.get("officer_name") or "").strip()[:40]
+            session["officer_name"] = name or "officer"
             session.permanent = True
             nxt = request.args.get("next") or ""
             if not nxt.startswith("/") or nxt.startswith("//"):
@@ -90,12 +92,14 @@ def dashboard():
               c.execute("SELECT state, COUNT(*) n FROM cases GROUP BY state")}
     top = c.execute(
         "SELECT cases.*, pension_master.full_name AS name, pension_master.scheme_code AS scheme FROM cases "
-        "JOIN pension_master USING(pensioner_id) WHERE cases.state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION') "
+        "JOIN pension_master USING(pensioner_id) WHERE cases.state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION','HOLD_PENDING') "
         "ORDER BY probability DESC LIMIT 10").fetchall()
     fh = health.feed_health(c)
     stats = feedback.stats(c)
+    audit_ok, audit_bad, audit_n = db.verify_audit(c)
     c.close()
-    return render_template("dashboard.html", counts=counts, top=top, feeds=fh, stats=stats)
+    return render_template("dashboard.html", counts=counts, top=top, feeds=fh, stats=stats,
+                           audit_ok=audit_ok, audit_bad=audit_bad, audit_n=audit_n)
 
 @app.route("/ingest", methods=["GET"])
 def ingest_page():
@@ -138,10 +142,18 @@ def run_pipeline():
     r = officer_required()
     if r: return r
     c = conn()
-    made, p_star = pipeline.run_pipeline(c)
+    made, p_star, breaker, watch = pipeline.run_pipeline(c)
     c.commit()
     c.close()
-    return redirect(url_for("queue", msg=f"Pipeline complete: {made} new cases. Priority threshold p*={p_star:.2f}."))
+    msg = f"Pipeline complete: {made} new cases. Priority threshold p*={p_star:.2f}."
+    if breaker:
+        msg = (f"CIRCUIT BREAKER TRIPPED: case creation stopped at {made} after the run produced "
+               f"more new cases than the configured cap (max_new_cases_per_run). "
+               "Investigate feed integrity before rerunning. No pensions were held automatically.")
+    elif watch:
+        msg += (" FLOOD WATCH: cumulative new-case volume over recent runs exceeds 3x the per-run cap; "
+                "a feed may be drip-flooding cases under the cap. Investigate feed integrity.")
+    return redirect(url_for("queue", msg=msg))
 
 @app.route("/queue")
 def queue():
@@ -149,9 +161,10 @@ def queue():
     if r: return r
     c = conn()
     rows = c.execute(
-        "SELECT cases.*, pension_master.full_name AS name, pension_master.scheme_code AS scheme, pension_master.monthly_amount FROM cases "
+        "SELECT cases.*, pension_master.full_name AS name, pension_master.scheme_code AS scheme, pension_master.monthly_amount, "
+        "(SELECT COUNT(*) FROM signals s WHERE s.case_id=cases.id AND s.signal='audit_sample') AS audit FROM cases "
         "JOIN pension_master USING(pensioner_id) "
-        "WHERE cases.state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION') "
+        "WHERE cases.state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION','HOLD_PENDING') "
         "ORDER BY priority DESC, probability DESC").fetchall()
     p_star = scoring.cost_threshold(float(db.get_setting(c, "cost_false_hold")),
                                     float(db.get_setting(c, "cost_missed_death")))
@@ -186,9 +199,11 @@ def case_detail(cid):
     deadline = None
     if case["held_at"]:
         deadline = (datetime.fromisoformat(case["held_at"].replace("Z", "")) + timedelta(days=window)).date().isoformat()
+    pending = c.execute("SELECT * FROM hold_requests WHERE case_id=? AND state='PENDING' ORDER BY id DESC LIMIT 1", (cid,)).fetchone()
     c.close()
     return render_template("case.html", case=case, sigs=sigs, ver=ver, match=match,
-                           appeals=appeal, deadline=deadline)
+                           appeals=appeal, deadline=deadline, pending=pending,
+                           officer_name=session.get("officer_name", "officer"))
 
 @app.route("/case/<int:cid>/verify", methods=["POST"])
 def verify(cid):
@@ -208,22 +223,85 @@ def verify(cid):
 def _tracking_id():
     return "APL-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
 
+MIN_REASON_CHARS = 40
+
+def _case_snapshot(c, cid):
+    """Hash of the evidence the requesting officer saw: signals, verification
+    state and probability. Approval binds to this snapshot."""
+    import hashlib
+    sigs = c.execute("SELECT signal,present,value FROM signals WHERE case_id=? ORDER BY signal", (cid,)).fetchall()
+    ver = c.execute("SELECT step,done,note FROM verifications WHERE case_id=? ORDER BY step", (cid,)).fetchall()
+    case = c.execute("SELECT probability,matched_death_id FROM cases WHERE id=?", (cid,)).fetchone()
+    body = repr(([dict(s) for s in sigs], [dict(v) for v in ver], case["probability"], case["matched_death_id"]))
+    return hashlib.sha256(body.encode()).hexdigest()
+
+def _boilerplate(c, reasons):
+    """Reject reused or near-reused justifications: exact duplicates and
+    near-duplicates (>=0.85 similarity) of reasons on any other case or
+    pending request. Cosmetic rewording of the same text is still boilerplate."""
+    import difflib
+    norm = " ".join(reasons.lower().split())
+    rows = c.execute("SELECT hold_reasons FROM cases WHERE hold_reasons IS NOT NULL").fetchall()
+    rows += c.execute("SELECT reasons AS hold_reasons FROM hold_requests WHERE state='PENDING'").fetchall()
+    for r in rows:
+        other = " ".join((r["hold_reasons"] or "").lower().split())
+        if other and (other == norm or difflib.SequenceMatcher(None, norm, other).ratio() >= 0.85):
+            return True
+    return False
+
 @app.route("/case/<int:cid>/hold", methods=["POST"])
 def hold(cid):
+    """Request a hold. Dual control: the request only marks the case
+    HOLD_PENDING; a DIFFERENT officer must approve it before anything is held."""
     r = officer_required()
     if r: return r
     reasons = (request.form.get("reasons") or "").strip()
     c = conn()
     ver = c.execute("SELECT COUNT(*) total, SUM(done) done FROM verifications WHERE case_id=?", (cid,)).fetchone()
-    if not reasons:
+    if len(reasons) < MIN_REASON_CHARS:
         c.close()
-        return redirect(url_for("case_detail", cid=cid, err="Written reasons are required to hold a pension."))
+        return redirect(url_for("case_detail", cid=cid, err=f"Written reasons are required, at least {MIN_REASON_CHARS} characters of case-specific detail."))
+    if _boilerplate(c, reasons):
+        c.close()
+        return redirect(url_for("case_detail", cid=cid, err="These reasons were already used on another case. Copied boilerplate is not accepted; write case-specific reasons."))
     if ver["total"] and ver["done"] < ver["total"]:
         c.close()
         return redirect(url_for("case_detail", cid=cid, err="All verification steps must be completed before a hold."))
+    me = session.get("officer_name", "officer")
+    now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    snap = _case_snapshot(c, cid)
+    c.execute("INSERT INTO hold_requests(case_id,requester,reasons,requested_at,snapshot_hash) VALUES(?,?,?,?,?)",
+              (cid, me, reasons, now, snap))
+    c.execute("UPDATE cases SET state='HOLD_PENDING' WHERE id=?", (cid,))
+    db.log(c, me, "hold_request", f"case={cid}")
+    c.commit()
+    c.close()
+    return redirect(url_for("case_detail", cid=cid, msg="Hold requested. A second officer must approve it before the pension is held."))
+
+@app.route("/case/<int:cid>/approve-hold", methods=["POST"])
+def approve_hold(cid):
+    r = officer_required()
+    if r: return r
+    me = session.get("officer_name", "officer")
+    c = conn()
+    req = c.execute("SELECT * FROM hold_requests WHERE case_id=? AND state='PENDING' ORDER BY id DESC LIMIT 1", (cid,)).fetchone()
+    if not req:
+        c.close()
+        return redirect(url_for("case_detail", cid=cid, err="No pending hold request."))
+    if req["requester"] == me:
+        c.close()
+        return redirect(url_for("case_detail", cid=cid, err="Dual control: the officer who requested the hold cannot approve it. A different officer must sign in and approve."))
+    if req["snapshot_hash"] and req["snapshot_hash"] != _case_snapshot(c, cid):
+        c.execute("UPDATE hold_requests SET state='STALE' WHERE id=?", (req["id"],))
+        c.execute("UPDATE cases SET state='VERIFICATION' WHERE id=? AND state='HOLD_PENDING'", (cid,))
+        db.log(c, me, "hold_stale", f"case={cid} requester={req['requester']}")
+        c.commit()
+        c.close()
+        return redirect(url_for("case_detail", cid=cid, err="The case evidence changed since this hold was requested. The request is void; review the current evidence and request again."))
     now = datetime.utcnow()
+    c.execute("UPDATE hold_requests SET state='APPROVED' WHERE id=?", (req["id"],))
     c.execute("UPDATE cases SET state='HELD', hold_reasons=?, held_at=? WHERE id=?",
-              (reasons, now.isoformat(timespec="seconds") + "Z", cid))
+              (req["reasons"], now.isoformat(timespec="seconds") + "Z", cid))
     case = c.execute("SELECT pensioner_id FROM cases WHERE id=?", (cid,)).fetchone()
     c.execute("UPDATE pension_master SET pension_status='HELD' WHERE pensioner_id=?", (case["pensioner_id"],))
     tid = _tracking_id()
@@ -232,10 +310,25 @@ def hold(cid):
               (tid, cid, now.isoformat(timespec="seconds") + "Z",
                "Hold notice issued. Family may appeal by " + (now + timedelta(days=window)).date().isoformat() + ".",
                "NOTICE"))
-    db.log(c, "officer", "hold", f"case={cid} tracking={tid}")
+    db.log(c, me, "hold_approved", f"case={cid} requester={req['requester']} tracking={tid}")
     c.commit()
     c.close()
-    return redirect(url_for("case_detail", cid=cid, msg=f"Pension held. Family appeal tracking ID: {tid}"))
+    return redirect(url_for("case_detail", cid=cid, msg=f"Pension held after second-officer approval. Family appeal tracking ID: {tid}"))
+
+@app.route("/case/<int:cid>/reject-hold", methods=["POST"])
+def reject_hold(cid):
+    r = officer_required()
+    if r: return r
+    me = session.get("officer_name", "officer")
+    c = conn()
+    req = c.execute("SELECT * FROM hold_requests WHERE case_id=? AND state='PENDING' ORDER BY id DESC LIMIT 1", (cid,)).fetchone()
+    if req:
+        c.execute("UPDATE hold_requests SET state='REJECTED' WHERE id=?", (req["id"],))
+        c.execute("UPDATE cases SET state='VERIFICATION' WHERE id=? AND state='HOLD_PENDING'", (cid,))
+        db.log(c, me, "hold_rejected", f"case={cid} requester={req['requester']}")
+        c.commit()
+    c.close()
+    return redirect(url_for("case_detail", cid=cid, msg="Hold request rejected; case returned to verification."))
 
 @app.route("/case/<int:cid>/release", methods=["POST"])
 def release(cid):
@@ -312,8 +405,14 @@ def appeals():
         "SELECT appeals.*, cases.pensioner_id, pension_master.full_name AS name FROM appeals "
         "JOIN cases ON appeals.case_id=cases.id JOIN pension_master USING(pensioner_id) "
         "ORDER BY appeals.id DESC").fetchall()
+    sla = int(db.get_setting(c, "appeal_response_sla_days") or 14)
+    today = datetime.utcnow().date()
+    rows = [dict(r) for r in rows]
+    for r in rows:
+        r["overdue"] = (r["status"] == "OPEN" and r["submitted_at"] and
+                        (today - datetime.fromisoformat(r["submitted_at"].replace("Z", "")).date()).days > sla)
     c.close()
-    return render_template("appeals.html", rows=rows)
+    return render_template("appeals.html", rows=rows, sla=sla)
 
 @app.route("/appeals/<int:aid>/resolve", methods=["POST"])
 def appeal_resolve(aid):
@@ -417,9 +516,10 @@ def feedback_page():
     if r: return r
     c = conn()
     st = feedback.stats(c)
+    au = feedback.audit_stats(c)
     w = c.execute("SELECT * FROM weights").fetchall()
     c.close()
-    return render_template("feedback.html", stats=st, weights=w)
+    return render_template("feedback.html", stats=st, weights=w, audit=au)
 
 @app.route("/feedback/recalibrate", methods=["POST"])
 def recalibrate():

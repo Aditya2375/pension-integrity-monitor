@@ -267,7 +267,9 @@ def _assign(pm_rows, scan_args, id_of, aadhaar_rows=None, aadhaar_key=None, min_
         by_pid[pid] = (g, conf, rid)
     return by_pid
 
-def run_pipeline(conn, today=None, snapshot=None):
+def run_pipeline(conn, today=None, snapshot=None, rng=None):
+    import random
+    rng = rng or random.Random()
     snap = snapshot or today or date.today()
     base_rate = float(db.get_setting(conn, "base_rate"))
     p_star = scoring.cost_threshold(float(db.get_setting(conn, "cost_false_hold")),
@@ -301,6 +303,9 @@ def run_pipeline(conn, today=None, snapshot=None):
     eroll_rows = {r["epic_number"]: r for r in F.eroll_del}
 
     made = 0
+    cap = int(db.get_setting(conn, "max_new_cases_per_run") or 500)
+    breaker = False
+    flagged_pids = set()
     for p in all_pm:
         pid = p["pensioner_id"]
         lo = scoring.logit(base_rate)
@@ -447,6 +452,7 @@ def run_pipeline(conn, today=None, snapshot=None):
 
         if not contrib or not any(c[1] for c in contrib):
             continue
+        flagged_pids.add(pid)
         for _, _, d in contrib:
             lo += d
         prob = scoring.sigmoid(lo)
@@ -482,6 +488,9 @@ def run_pipeline(conn, today=None, snapshot=None):
                          (base_rate, round(lo, 4), score, priority, reg, cid))
             conn.execute("DELETE FROM signals WHERE case_id=?", (cid,))
         else:
+            if made >= cap:
+                breaker = True
+                continue
             cur = conn.execute(
                 "INSERT INTO cases(pensioner_id,created_at,base_rate,log_odds,probability,priority,state,matched_death_id) "
                 "VALUES(?,?,?,?,?,?,'FLAGGED',?)",
@@ -495,6 +504,53 @@ def run_pipeline(conn, today=None, snapshot=None):
             lp, lm = w.get(name, (1.0, 1.0))
             conn.execute("INSERT INTO signals(case_id,signal,present,value,lr_plus,lr_minus) VALUES(?,?,?,?,?,?)",
                          (cid, name, present, str(d), lp, lm))
+    # randomized audit sampling: a small random share of still-paid pensioners
+    # with no flags goes into the queue as audit-sample cases. Their outcomes are
+    # the only unbiased ground-truth stream; flagged-case resolutions are
+    # selection-biased and must not calibrate the model alone.
+    rate = float(db.get_setting(conn, "audit_sample_rate") or 0.0)
+    sampled = 0
+    if rate > 0:
+        for p in all_pm:
+            pid = p["pensioner_id"]
+            if pid in flagged_pids:
+                continue
+            credit = F.last_credit.get(pid)
+            if not (credit is not None and F.months(credit) <= 3):
+                continue
+            existing = conn.execute(
+                "SELECT id FROM cases WHERE pensioner_id=? AND state IN "
+                "('FLAGGED','UNDER_REVIEW','VERIFICATION','HELD','HOLD_PENDING')", (pid,)).fetchone()
+            if existing:
+                continue
+            if rng.random() < rate:
+                cur = conn.execute(
+                    "INSERT INTO cases(pensioner_id,created_at,base_rate,log_odds,probability,priority,state,matched_death_id) "
+                    "VALUES(?,?,?,?,?,0,'FLAGGED',NULL)",
+                    (pid, datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                     base_rate, round(scoring.logit(base_rate), 4), round(base_rate, 4)))
+                acid = cur.lastrowid
+                conn.execute("INSERT INTO signals(case_id,signal,present,value,lr_plus,lr_minus) VALUES(?,?,?,?,?,?)",
+                             (acid, "audit_sample", 1, "random integrity audit sample", 1.0, 1.0))
+                for step in VERIFICATION_STEPS:
+                    conn.execute("INSERT INTO verifications(case_id,step) VALUES(?,?)", (acid, step))
+                sampled += 1
     conn.commit()
-    db.log(conn, "pipeline", "flag_run", f"new_cases={made} threshold={p_star:.3f}")
-    return made, p_star
+    if breaker:
+        db.log(conn, "pipeline", "circuit_breaker",
+               f"case creation halted at cap={cap}; possible feed flooding - investigate before rerun")
+    # drip-flood watch: a per-run cap alone misses slow flooding that stays
+    # under the cap every run. Sum recent runs and warn on anomalous volume.
+    import re
+    watch = False
+    recent = conn.execute(
+        "SELECT detail FROM audit WHERE action='flag_run' ORDER BY id DESC LIMIT 10").fetchall()
+    counts = [int(m.group(1)) for r in recent
+              if (m := re.search(r"new_cases=(\d+)", r["detail"]))]
+    window_total = made + sum(counts)
+    if counts and window_total > 3 * cap:
+        watch = True
+        db.log(conn, "pipeline", "flood_watch",
+               f"cumulative new-case volume {window_total} over last {len(counts)+1} runs exceeds 3x cap={cap}; possible drip flooding - investigate feed integrity")
+    db.log(conn, "pipeline", "flag_run", f"new_cases={made} audit_samples={sampled} threshold={p_star:.3f} breaker={breaker}")
+    return made, p_star, breaker, watch

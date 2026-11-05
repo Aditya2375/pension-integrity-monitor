@@ -39,6 +39,9 @@ def test_end_to_end():
     assert fh["death_registry"]["rows_loaded"] == 1
     conn.close()
 
+    conn = db.connect()
+    conn.execute("UPDATE settings SET value='0' WHERE key='audit_sample_rate'")
+    conn.commit(); conn.close()
     r = c.post("/pipeline/run", follow_redirects=True)
     assert b"Pipeline complete" in r.data
 
@@ -61,8 +64,8 @@ def test_end_to_end():
     conn.close()
 
     cid = top["id"]
-    # hold blocked before verification completes
-    r = c.post(f"/case/{cid}/hold", data={"reasons": "matched registry entry"}, follow_redirects=True)
+    # hold blocked before verification completes (reason long enough to reach the verification check)
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "matched registry entry, verified against the district registrar record"}, follow_redirects=True)
     assert b"All verification steps" in r.data
 
     for s in steps:
@@ -72,7 +75,33 @@ def test_end_to_end():
     r = c.post(f"/case/{cid}/hold", data={"reasons": ""}, follow_redirects=True)
     assert b"Written reasons are required" in r.data
 
-    r = c.post(f"/case/{cid}/hold", data={"reasons": "Registry match verified on all four steps."}, follow_redirects=True)
+    # boilerplate/short reasons rejected
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "too short"}, follow_redirects=True)
+    assert b"at least 40 characters" in r.data
+
+    # hold request only pends; no tracking ID yet
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "Registry match verified on all four steps against district records."}, follow_redirects=True)
+    assert b"second officer must approve" in r.data
+    conn = db.connect()
+    case = conn.execute("SELECT * FROM cases WHERE id=?", (cid,)).fetchone()
+    assert case["state"] == "HOLD_PENDING"
+    conn.close()
+
+    # the requesting officer cannot approve their own hold
+    r = c.post(f"/case/{cid}/approve-hold", follow_redirects=True)
+    assert b"cannot approve it" in r.data
+
+    # duplicate (boilerplate) reasons on the other case are rejected
+    cases2 = db.connect().execute("SELECT id FROM cases WHERE pensioner_id='T002'").fetchone()
+    for s in db.connect().execute("SELECT * FROM verifications WHERE case_id=?", (cases2["id"],)).fetchall():
+        c.post(f"/case/{cases2['id']}/verify", data={"vid": s["id"], "done": "1", "note": "checked"})
+    r = c.post(f"/case/{cases2['id']}/hold", data={"reasons": "Registry match verified on all four steps against district records."}, follow_redirects=True)
+    assert b"boilerplate" in r.data
+
+    # a second, different officer approves
+    c.post("/logout")
+    login2 = c.post("/login", data={"key": "officer", "officer_name": "B. Verma"}, follow_redirects=True)
+    r = c.post(f"/case/{cid}/approve-hold", follow_redirects=True)
     assert b"Family appeal tracking ID" in r.data
 
     conn = db.connect()

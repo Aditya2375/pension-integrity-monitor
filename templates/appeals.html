@@ -10,7 +10,7 @@
       <td><code>{{ a['tracking_id'] }}</code></td>
       <td>{{ a['name'] }}<br><span class="muted">{{ a['pensioner_id'] }}</span></td>
       <td>{{ a['submitted_at'] }}</td>
-      <td>{{ a['status'] }}</td>
+      <td>{{ a['status'] }}{% if a['overdue'] %} <span class="pill warn">overdue {{ sla }}d SLA</span>{% endif %}</td>
       <td>{{ a['statement'] }}{% if a['decision'] %}<br><span class="muted">Decision: {{ a['decision'] }}</span>{% endif %}</td>
       <td>
         {% if a['status'] == 'OPEN' %}
