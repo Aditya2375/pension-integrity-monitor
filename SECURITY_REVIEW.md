@@ -85,3 +85,26 @@ Built, responding to both hostile reviews naming these as the core walls:
 - Throttle unchanged (5 failures / 15 min per IP); passwords are never logged; audit rows record usernames, not credentials.
 
 Scorer wall, stated straight: three further candidates (V16 multiregime risk-weighted, V17 consult-feature model, V18 gated-secondary retrain) were each frozen and tested under the freeze-then-score protocol and each failed to beat V15 at its precision. The measured miss mass is fresh unregistered deaths with no signal in any feed; the oracle catch-all tops at 92% recall at 6% precision. No remaining scorer lever exists that does not amount to inventing new synthetic signals, which would be overfitting the benchmark, not improving detection. V15 (99.13% precision / 88.81% recall, blind-verified) stays the frozen final.
+
+## Threat model (2026-11-05, after three hostile review rounds)
+
+What the system provides, in defensible words:
+- Account-level attribution of every action, not verified human identity.
+- Two-account approval for holds, not proven two-person approval. One person with two accounts defeats it; organizational process must keep accounts one-per-person.
+- Local tamper evidence for the audit log (hash chain + append-only triggers + fsynced anchor file), not independent audit anchoring. Database-only rewrites are caught; rewriting both files defeats it.
+- Detection of certain recorded-event modifications, not proof the log is complete: a code path that skips logging leaves no trace.
+- Randomly sampled audit stream, whose estimates depend on adjudication quality and sample size.
+- Benchmark performance on one specified synthetic benchmark (99.13% precision / 88.81% recall), not demonstrated deployment performance.
+- Suspicion identification for human review, not autonomous fraud determination.
+
+## Addendum 2026-11-05 (4): round-3 fixes
+
+Built after the third hostile review:
+- Session revocation: deactivation or password change bumps a per-account session_version; live sessions die on their next request (tested).
+- Step-up re-authentication: hold approval and officer add/deactivate require re-entering the acting officer's password (tested).
+- Forced password change at first sign-in for accounts created by another officer (tested).
+- Crash-consistent anchor protocol: the anchor write happens before the database commit; verification reports an anchor exactly one entry ahead of an intact chain as INCOMPLETE (possible crash residue, manual review) and never silently reconciles; any other divergence is a break.
+- Feed provenance: every upload's SHA-256 content hash, officer, row counts and time are written to the audit log as the file streams in.
+- Tests added for all of the above, plus self-approval, stale-evidence approval, tamper, anchor-mismatch and session-revocation paths.
+
+Known walls (need real infrastructure, stated plainly): verified human identity behind accounts, independent off-host log anchoring, hardware-backed credentials, and any scorer improvement past the measured signal ceiling.
