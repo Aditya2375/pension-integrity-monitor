@@ -3,6 +3,7 @@
 <div class="card">
   <h2>Officer review queue</h2>
   <p class="muted">Ranked by calibrated probability. Priority line: p* = {{ '%.2f'|format(p_star) }} from the configured costs. This queue never holds a pension; officers do, after verification, with written reasons.</p>
+  <p class="muted"><b>Two tiers.</b> <span class="pill pri">tier 1</span> cases sit above p*: high confidence. On the frozen synthetic benchmark this band measured 99.13% precision and 88.81% recall: of 1,000 tier-1 reviews about 991 confirm a death. <span class="pill">tier 2</span> cases show any weaker anomaly below p*: a broad human-review band that on local synthetic sets lifted overall recall to about 91-95% but at under 1% precision: of 1,000 tier-2 reviews only about 8 confirm a death, and the band can cover roughly half the roll. Tier 2 exists so reviewers can spend spare capacity on it; it is never evidence by itself and never changes what a hold requires. Tier 2 figures are local synthetic measurements, not blind-verified.</p>
   {% if rows %}
   <table>
     <tr><th>Case</th><th>Pensioner</th><th>Scheme</th><th>Monthly</th><th>Probability</th><th>State</th><th></th></tr>
@@ -12,7 +13,7 @@
       <td>{{ c['name'] }}<br><span class="muted">{{ c['pensioner_id'] }}</span></td>
       <td>{{ c['scheme'] }}</td>
       <td>{{ c['monthly_amount'] }}</td>
-      <td class="prob">{{ '%.1f%%'|format(c['probability'] * 100) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
+      <td class="prob">{{ '%.1f%%'|format(c['probability'] * 100) }}{% if c['priority'] %} <span class="pill pri">tier 1</span>{% else %} <span class="pill">tier 2</span>{% endif %}</td>
       <td>{{ c['state'] }}</td>
       <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Review</a></td>
     </tr>

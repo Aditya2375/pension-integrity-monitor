@@ -70,3 +70,22 @@ V17 added per-person baseline-normalised silence features (baseline z-scores, qu
 V18 kept V17 as the primary and added a gated secondary upweighted on the hardest subgroup (recent deaths within 45 days of the snapshot with no registry edge). On a fresh proxy seed it gained +2.2 recall points over V15, below the +3 bar set for spending a blind round, at 98.87% precision, so it was discarded.
 
 The adoption rule throughout: an idea replaces the frozen best only if it beats it head-to-head on the same held-out data at the same precision; otherwise it is discarded with reasons. Model weights, thresholds and training fixtures stay private; only aggregate scores and provenance hashes are retained.
+
+## Tiered review queue (measured 5 November 2026)
+
+Miss anatomy shows about 91% of all tier-1 misses are deaths within 45 days of the snapshot, unregistered, pension still paid: the family still uses the account or the silence is days long and indistinguishable from normal irregular activity. A score-curve sweep and an oracle catch-all (flag every still-paid pensioner with any anomaly on any channel) bound what is possible: the catch-all reaches only 92% recall at about 6% precision, so 98% recall at high precision is not reachable with these feeds. The system therefore exposes two tiers, and the officer queue labels them.
+
+- **Tier 1** is the frozen V15 operating point, unchanged. Blind-verified: 99.13% precision, 88.81% recall. Per 1,000 tier-1 reviews about 991 confirm a death.
+- **Tier 2** is a broad human-review band: every still-paid pensioner with any weaker anomaly below the tier-1 line (short bank or SIM silence, missing life certificate, weak document edge, baseline-exceeding silence). It is labelled low precision in the queue, is never evidence by itself, and changes nothing about what a hold requires.
+
+Measured on three local synthetic held-out sets (frozen rules, single look; tier 2 has no blind measurement):
+
+| Set | Tier 1 precision | Tier 1 recall | Tier 2 precision (added cases) | Tier 2 recall (added) | Combined recall | Combined precision | Tier 2 share of roll |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| RepairTest | 99.31% | 83.87% | 0.76% | 11.35% | 95.22% | 6.07% | 55% |
+| RepairAdverse | 99.54% | 82.29% | 0.81% | 9.14% | 91.43% | 7.54% | 44% |
+| proxyB | 99.30% | 83.32% | 0.84% | 12.05% | 95.37% | 6.30% | 55% |
+
+Per 1,000 tier-2 reviews about 8 confirm a death and about 992 are unnecessary investigations; the band covers roughly 44-55% of the roll on these sets. Tier 2 is a capacity decision for the reviewing authority, not a model claim. A conditional-distribution test on the hardest subgroup (recent unregistered deaths with zero thresholded anomaly) found residual predictive signal (4-fold AUC about 0.80) but harvesting it adds only about one recall point before precision collapses, so it does not change the ceiling.
+
+Independent methods review (two external critics, anonymized synthetic-data brief) agreed: no honest modeling method breaks this ceiling with the same signals; the only levers are scoring lag (score 30-45 days after period end so fresh deaths become measurable silence), a lower-precision human-review tier, or better upstream data such as timely death registration and presence-verified KYC.
