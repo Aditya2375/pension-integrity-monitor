@@ -48,7 +48,7 @@ No claim of legal compliance, government approval or production data access foll
 
 ## Final candidate: V15 (frozen 5 November 2026)
 
-The frozen final candidate is V15, a reliability-gated two-expert blend. Its one blind scoring (round 17, 200,000-row fresh set; candidate, features and thresholds frozen before the feeds existed) measured 99.13% precision and 88.81% recall. This is the best measured operating point of the programme and the reference any future candidate must beat head-to-head on the same held-out data at the same precision.
+The frozen final candidate is V15, a reliability-gated two-expert blend. Its one blind scoring (round 17, 200,000-row fresh set; candidate, features and thresholds frozen before the feeds existed) measured 99.13% precision and 88.81% recall (about 6,727 true flags, 59 false flags, 848 missed deaths out of about 7,575; approximate Wilson 95% intervals: precision 98.88-99.33%, recall 88.08-89.50%). Every row is an independently generated pensioner, one snapshot per person, so there is no repeated-entity leakage across the set. These are one-round point estimates on synthetic data, not a field expectation. This is the best measured operating point of the programme and the reference any future candidate must beat head-to-head on the same held-out data at the same precision.
 
 ## Full candidate record
 

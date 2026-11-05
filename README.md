@@ -18,7 +18,7 @@ The system never stops a pension by itself. Flags only order a review queue. A p
 - **Hold with mandatory written reasons**, a family tracking ID and an appeal deadline.
 - **Family appeal portal** (public, no sign-in): look up a tracking ID, see case status and deadline, submit an appeal. Officers resolve appeals from the appeals page.
 - **Release with full arrears**, computed from days held and monthly pension.
-- **Outcome feedback**: verified outcomes (confirmed deceased / confirmed alive) recalibrate the signal likelihood ratios and the base rate with Laplace smoothing, once at least 5 cases are resolved.
+- **Outcome feedback**, guarded against feedback-loop bias: verified outcomes recalibrate the signal likelihood ratios with Laplace smoothing only after at least 30 resolved cases with 5+ of each outcome. The configured base rate is never updated from resolved cases (they are a selected sample), and unresolved cases never count as negative.
 - **Feed-health monitoring**: each feed is marked ok, stale or never loaded against its expected cadence.
 
 ## Feed schemas

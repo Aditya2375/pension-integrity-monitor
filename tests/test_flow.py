@@ -111,7 +111,7 @@ def test_end_to_end():
     r = c.post(f"/case/{cid}/outcome", data={"outcome": "confirmed_alive", "note": "appeal verified"}, follow_redirects=True)
     assert r.status_code == 200
     r = c.post("/feedback/recalibrate", follow_redirects=True)
-    assert b"need at least 5 resolved cases" in r.data
+    assert b"need at least 30 resolved cases" in r.data
 
     # feed health page renders
     r = c.get("/health")
