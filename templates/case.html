@@ -82,6 +82,7 @@
   <p class="err">You requested this hold. Dual control requires a different officer to approve or reject it; sign in under another officer name.</p>
   {% else %}
   <form method="post" action="{{ url_for('approve_hold', cid=case['id']) }}" style="display:inline">
+    <input type="password" name="password" placeholder="re-enter your password" required style="max-width:200px">
     <button class="btn warn">Approve hold (I am a different officer)</button>
   </form>
   <form method="post" action="{{ url_for('reject_hold', cid=case['id']) }}" style="display:inline;margin-left:10px">

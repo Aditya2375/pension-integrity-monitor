@@ -13,9 +13,9 @@ def client():
     app_module.app.config["TESTING"] = True
     return app_module.app.test_client()
 
-def login(c):
+def login(c, username="admin"):
     app_module._ATTEMPTS.clear()
-    return c.post("/login", data={"key": "officer"}, follow_redirects=True)
+    return c.post("/login", data={"username": username, "key": "officer"}, follow_redirects=True)
 
 def test_end_to_end():
     c = client()
@@ -87,8 +87,11 @@ def test_end_to_end():
     assert case["state"] == "HOLD_PENDING"
     conn.close()
 
-    # the requesting officer cannot approve their own hold
+    # step-up re-auth is required before any approval check runs
     r = c.post(f"/case/{cid}/approve-hold", follow_redirects=True)
+    assert b"Re-enter your password" in r.data
+    # the requesting officer cannot approve their own hold
+    r = c.post(f"/case/{cid}/approve-hold", data={"password": "officer"}, follow_redirects=True)
     assert b"cannot approve it" in r.data
 
     # duplicate (boilerplate) reasons on the other case are rejected
@@ -98,10 +101,18 @@ def test_end_to_end():
     r = c.post(f"/case/{cases2['id']}/hold", data={"reasons": "Registry match verified on all four steps against district records."}, follow_redirects=True)
     assert b"boilerplate" in r.data
 
-    # a second, different officer approves
+    # a second, different officer approves - a real account, not a typed name
+    r = c.post("/officers/add", data={"username": "bverma", "password": "second-officer-pass", "admin_password": "officer"}, follow_redirects=True)
+    assert b"bverma" in r.data
     c.post("/logout")
-    login2 = c.post("/login", data={"key": "officer", "officer_name": "B. Verma"}, follow_redirects=True)
+    login2 = c.post("/login", data={"username": "bverma", "key": "second-officer-pass"}, follow_redirects=True)
+    assert b"Change your password" in login2.data  # forced at first sign-in
+    r = c.post("/change-password", data={"old": "second-officer-pass", "new": "bverma-new-pass-1"}, follow_redirects=True)
+    assert b"Password changed" in r.data
+    # step-up: approval without re-entering the password is refused
     r = c.post(f"/case/{cid}/approve-hold", follow_redirects=True)
+    assert b"Re-enter your password" in r.data
+    r = c.post(f"/case/{cid}/approve-hold", data={"password": "bverma-new-pass-1"}, follow_redirects=True)
     assert b"Family appeal tracking ID" in r.data
 
     conn = db.connect()

@@ -113,6 +113,16 @@ CREATE TABLE IF NOT EXISTS audit (
   ts TEXT, actor TEXT, action TEXT, detail TEXT,
   prev_hash TEXT, hash TEXT
 );
+CREATE TABLE IF NOT EXISTS officers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  salt TEXT NOT NULL,
+  active INTEGER DEFAULT 1,
+  created_at TEXT,
+  session_version INTEGER DEFAULT 0,
+  must_change INTEGER DEFAULT 1
+);
 CREATE TABLE IF NOT EXISTS hold_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   case_id INTEGER, requester TEXT, reasons TEXT, requested_at TEXT,
@@ -189,6 +199,14 @@ def init_db():
         conn.execute("INSERT OR IGNORE INTO feeds(feed_id,name,expected_cadence_days) VALUES(?,?,?)", (fid, name, cad))
     for k, v in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k, v))
+    # bootstrap: if no officer accounts exist, the deployment key creates the
+    # first one as 'admin'. With no key configured there is no way in.
+    import os
+    if conn.execute("SELECT COUNT(*) n FROM officers").fetchone()["n"] == 0:
+        key = os.environ.get("PIM_OFFICER_KEY")
+        if key:
+            create_officer(conn, "admin", key)
+            conn.execute("UPDATE officers SET must_change=0 WHERE username='admin'")
     for sig, (lp, lm) in DEFAULT_WEIGHTS.items():
         conn.execute("INSERT OR IGNORE INTO weights(signal,lr_plus,lr_minus) VALUES(?,?,?)", (sig, lp, lm))
     conn.commit()
@@ -227,8 +245,51 @@ def log(conn, actor, action, detail=""):
     ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     body = f"{prev_hash}|{ts}|{actor}|{action}|{detail}"
     h = hashlib.sha256(body.encode()).hexdigest()
-    conn.execute("INSERT INTO audit(ts,actor,action,detail,prev_hash,hash) VALUES(?,?,?,?,?,?)",
-                 (ts, actor, action, detail, prev_hash, h))
+    cur = conn.execute("INSERT INTO audit(ts,actor,action,detail,prev_hash,hash) VALUES(?,?,?,?,?,?)",
+                       (ts, actor, action, detail, prev_hash, h))
+    anchor_write(cur.lastrowid, h)
+
+def hash_password(password, salt_hex):
+    import hashlib
+    return hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex),
+                          n=2**14, r=8, p=1, dklen=32).hex()
+
+def create_officer(conn, username, password):
+    import secrets
+    from datetime import datetime
+    salt = secrets.token_hex(16)
+    conn.execute("INSERT INTO officers(username,password_hash,salt,active,created_at) VALUES(?,?,?,1,?)",
+                 (username, hash_password(password, salt), salt,
+                  datetime.utcnow().isoformat(timespec="seconds") + "Z"))
+
+def check_officer(conn, username, password):
+    import hmac
+    row = conn.execute("SELECT * FROM officers WHERE username=? AND active=1", (username,)).fetchone()
+    if not row:
+        return False
+    return hmac.compare_digest(row["password_hash"], hash_password(password, row["salt"]))
+
+def _anchor_path():
+    import os
+    return os.environ.get("PIM_DB", "pim.sqlite3") + ".anchor"
+
+def anchor_write(entry_id, entry_hash):
+    """Dual-write every audit hash to a separate anchor file, fsynced. An
+    attacker rewriting only the database is caught by anchor mismatch. An
+    attacker rewriting both files defeats it; that limit is documented."""
+    with open(_anchor_path(), "a") as f:
+        f.write(f"{entry_id} {entry_hash}\n")
+        f.flush()
+        import os as _os
+        _os.fsync(f.fileno())
+
+def anchor_head():
+    try:
+        with open(_anchor_path()) as f:
+            lines = [ln.split() for ln in f if ln.strip()]
+        return (int(lines[-1][0]), lines[-1][1]) if lines else None
+    except FileNotFoundError:
+        return None
 
 def verify_audit(conn):
     """Replay the hash chain. Returns (ok, first_bad_id_or_none, entries)."""
@@ -245,4 +306,17 @@ def verify_audit(conn):
         if hashlib.sha256(body.encode()).hexdigest() != r["hash"]:
             return False, r["id"], len(rows)
         prev = r["hash"]
+    anchor = anchor_head()
+    if anchor is not None:
+        last = rows[-1] if rows else None
+        if not last or last["hash"] is None or last["hash"] != anchor[1]:
+            # The anchor is written before the database commit. A crash between
+            # the two leaves the anchor exactly one entry ahead of an intact
+            # chain. That is reported as INCOMPLETE (possible crash residue,
+            # needs manual review), never silently reconciled; any other
+            # divergence is a rewrite and reported as a break.
+            if (last and last["hash"] is not None
+                    and anchor[0] == last["id"] + 1):
+                return None, anchor[0], len(rows)  # tri-state: None = incomplete
+            return False, anchor[0], len(rows)
     return True, None, len(rows)

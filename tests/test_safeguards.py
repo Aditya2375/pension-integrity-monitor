@@ -13,9 +13,16 @@ def client():
     app_module.app.config["TESTING"] = True
     return app_module.app.test_client()
 
-def login(c, name="officer"):
+def login(c, name="admin"):
     app_module._ATTEMPTS.clear()
-    return c.post("/login", data={"key": "officer", "officer_name": name}, follow_redirects=True)
+    if name != "admin":
+        c.post("/login", data={"username": "admin", "key": "officer"}, follow_redirects=True)
+        c.post("/officers/add", data={"username": name, "password": "test-password-123", "admin_password": "officer"}, follow_redirects=True)
+        c.post("/logout")
+        r = c.post("/login", data={"username": name, "key": "test-password-123"}, follow_redirects=True)
+        c.post("/change-password", data={"old": "test-password-123", "new": name + "-pass-12345"}, follow_redirects=True)
+        return r
+    return c.post("/login", data={"username": "admin", "key": "officer"}, follow_redirects=True)
 
 def _load_all_feeds(c):
     for feed in ["pension_master", "pension_disbursements", "death_registry", "electoral_roll", "bank_transactions", "life_certificates", "telecom_activity", "hospital_records", "tax_pan_activity", "utility_bills", "toll_fastag"]:
@@ -131,12 +138,93 @@ def test_hold_snapshot_binding():
     conn.commit(); conn.close()
     c.post("/logout")
     login(c, "second officer")
-    r = c.post(f"/case/{cid}/approve-hold", follow_redirects=True)
+    r = c.post(f"/case/{cid}/approve-hold", data={"password": "second officer-pass-12345"}, follow_redirects=True)
     assert b"evidence changed" in r.data
     conn = db.connect()
     case = conn.execute("SELECT state FROM cases WHERE id=?", (cid,)).fetchone()
     assert case["state"] == "VERIFICATION"
     conn.close()
+
+
+def test_anchor_mismatch_detects_db_rewrite():
+    """Rewriting only the database (attacker misses the anchor file) is caught."""
+    conn = db.connect()
+    db.log(conn, "tester", "anchor_check", "before")
+    conn.commit()
+    ok, _, _ = db.verify_audit(conn)
+    assert ok
+    # attacker with DB-only access: drops triggers, rewrites, recomputes chain
+    conn.execute("DROP TRIGGER IF EXISTS audit_no_update")
+    import hashlib
+    row = conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT 1").fetchone()
+    prev = row["prev_hash"]
+    body = f"{prev}|{row['ts']}|{row['actor']}|{row['action']}|forged"
+    conn.execute("UPDATE audit SET detail='forged', hash=? WHERE id=?",
+                 (hashlib.sha256(body.encode()).hexdigest(), row["id"]))
+    conn.commit()
+    ok, bad, _ = db.verify_audit(conn)
+    assert not ok  # anchor file still holds the real head hash
+    # restore: recompute original detail
+    body = f"{prev}|{row['ts']}|{row['actor']}|{row['action']}|before"
+    conn.execute("UPDATE audit SET detail='before', hash=? WHERE id=?",
+                 (hashlib.sha256(body.encode()).hexdigest(), row["id"]))
+    conn.commit()
+    ok, _, _ = db.verify_audit(conn)
+    assert ok
+    conn.close()
+
+def test_officer_accounts():
+    """Per-officer identity: add, wrong-password rejection, deactivate, self-protection."""
+    c = client()
+    login(c)
+    # short password rejected
+    r = c.post("/officers/add", data={"username": "shorty", "password": "x", "admin_password": "officer"}, follow_redirects=True)
+    assert b"at least 12 characters" in r.data
+    # step-up: wrong admin password rejected
+    r = c.post("/officers/add", data={"username": "nobody", "password": "real-password-999", "admin_password": "wrong"}, follow_redirects=True)
+    assert b"Re-enter your own password" in r.data
+    r = c.post("/officers/add", data={"username": "rsharma", "password": "real-password-999", "admin_password": "officer"}, follow_redirects=True)
+    assert b"rsharma" in r.data
+    c.post("/logout")
+    app_module._ATTEMPTS.clear()
+    r = c.post("/login", data={"username": "rsharma", "key": "wrong-password-1"}, follow_redirects=True)
+    assert b"Wrong username or password" in r.data
+    r = c.post("/login", data={"username": "rsharma", "key": "real-password-999"}, follow_redirects=True)
+    assert b"Change your password" in r.data
+    c.post("/change-password", data={"old": "real-password-999", "new": "rsharma-new-pass-2"}, follow_redirects=True)
+    # cannot deactivate yourself
+    conn = db.connect()
+    oid = conn.execute("SELECT id FROM officers WHERE username='rsharma'").fetchone()["id"]
+    conn.close()
+    c.post(f"/officers/{oid}/deactivate", data={"admin_password": "rsharma-new-pass-2"}, follow_redirects=True)
+    conn = db.connect()
+    assert conn.execute("SELECT active FROM officers WHERE id=?", (oid,)).fetchone()["active"] == 1
+    conn.close()
+    # admin can deactivate
+    c.post("/logout")
+    app_module._ATTEMPTS.clear()
+    login(c)
+    c.post(f"/officers/{oid}/deactivate", data={"admin_password": "officer"}, follow_redirects=True)
+    conn = db.connect()
+    assert conn.execute("SELECT active FROM officers WHERE id=?", (oid,)).fetchone()["active"] == 0
+    # deactivated officer cannot sign in
+    conn.close()
+    c.post("/logout")
+    app_module._ATTEMPTS.clear()
+    r = c.post("/login", data={"username": "rsharma", "key": "rsharma-new-pass-2"}, follow_redirects=True)
+    assert b"Wrong username or password" in r.data
+    # a session live at deactivation time dies on its next request
+    c3 = client()
+    app_module._ATTEMPTS.clear()
+    c3.post("/login", data={"username": "admin", "key": "officer"}, follow_redirects=True)
+    conn = db.connect()
+    conn.execute("UPDATE officers SET active=0, session_version=session_version+1 WHERE username='admin'")
+    conn.commit(); conn.close()
+    r = c3.get("/", follow_redirects=False)
+    assert r.status_code == 302 and "/login" in r.headers["Location"]
+    conn = db.connect()
+    conn.execute("UPDATE officers SET active=1 WHERE username='admin'")
+    conn.commit(); conn.close()
 
 if __name__ == "__main__":
     test_audit_chain_tamper_detection()
@@ -147,4 +235,8 @@ if __name__ == "__main__":
     print("appeal overdue OK")
     test_hold_snapshot_binding()
     print("snapshot binding OK")
+    test_anchor_mismatch_detects_db_rewrite()
+    print("anchor OK")
+    test_officer_accounts()
+    print("officer accounts OK")
 

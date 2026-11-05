@@ -52,31 +52,139 @@ def conn():
 def officer_required():
     if not session.get("officer"):
         return redirect(url_for("login", next=request.path))
+    # session revocation: deactivation or a password change bumps
+    # session_version, killing every live session for that account.
+    c = conn()
+    row = c.execute("SELECT session_version, active, must_change FROM officers WHERE username=?",
+                    (session.get("officer_name"),)).fetchone()
+    c.close()
+    if (not row or not row["active"]
+            or row["session_version"] != session.get("session_version", -1)):
+        session.clear()
+        return redirect(url_for("login", next=request.path))
+    if row["must_change"] and request.endpoint not in ("change_password", "logout", "static"):
+        return redirect(url_for("change_password"))
     return None
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     err = None
-    if OFFICER_KEY is None:
-        return render_template("login.html", err="Officer sign-in is not configured on this deployment.")
+    c = conn()
+    has_officers = c.execute("SELECT COUNT(*) n FROM officers").fetchone()["n"] > 0
+    c.close()
+    if not has_officers:
+        return render_template("login.html", err="No officer account exists on this deployment. Set PIM_OFFICER_KEY before first start to bootstrap the admin account.")
     if request.method == "POST":
         ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?").split(",")[0].strip()
+        username = (request.form.get("username") or "").strip()[:40]
         if _throttled(ip, 5, 900):
             err = "Too many attempts. Try again in 15 minutes."
-        elif secrets.compare_digest(request.form.get("key") or "", OFFICER_KEY):
-            session.clear()
-            session["officer"] = True
-            name = (request.form.get("officer_name") or "").strip()[:40]
-            session["officer_name"] = name or "officer"
-            session.permanent = True
-            nxt = request.args.get("next") or ""
-            if not nxt.startswith("/") or nxt.startswith("//"):
-                nxt = ""
-            return redirect(nxt or url_for("dashboard"))
         else:
+            c = conn()
+            ok = db.check_officer(c, username, request.form.get("key") or "")
+            c.close()
+            if ok:
+                session.clear()
+                session["officer"] = True
+                session["officer_name"] = username
+                c2 = conn()
+                row = c2.execute("SELECT session_version FROM officers WHERE username=?", (username,)).fetchone()
+                c2.close()
+                session["session_version"] = row["session_version"]
+                session.permanent = True
+                c = conn()
+                db.log(c, username, "login", "officer sign-in")
+                c.commit()
+                c.close()
+                nxt = request.args.get("next") or ""
+                if not nxt.startswith("/") or nxt.startswith("//"):
+                    nxt = ""
+                return redirect(nxt or url_for("dashboard"))
             _record_fail(ip)
-            err = "Wrong key."
+            err = "Wrong username or password."
     return render_template("login.html", err=err)
+
+@app.route("/officers")
+def officers_page():
+    r = officer_required()
+    if r: return r
+    c = conn()
+    rows = c.execute("SELECT id,username,active,created_at FROM officers ORDER BY username").fetchall()
+    c.close()
+    return render_template("officers.html", rows=rows, me=session.get("officer_name"))
+
+@app.route("/officers/add", methods=["POST"])
+def officer_add():
+    r = officer_required()
+    if r: return r
+    username = (request.form.get("username") or "").strip()[:40]
+    pw = request.form.get("password") or ""
+    me = session.get("officer_name", "officer")
+    if not _fresh_auth(me, request.form.get("admin_password")):
+        return redirect(url_for("officers_page", err="Re-enter your own password to add an officer."))
+    if not username or len(pw) < 12:
+        return redirect(url_for("officers_page", err="Username required; password must be at least 12 characters."))
+    c = conn()
+    exists = c.execute("SELECT 1 FROM officers WHERE username=?", (username,)).fetchone()
+    if exists:
+        c.close()
+        return redirect(url_for("officers_page", err="That username already exists."))
+    db.create_officer(c, username, pw)
+    db.log(c, me, "officer_add", f"created officer account '{username}'")
+    c.commit()
+    c.close()
+    return redirect(url_for("officers_page", msg=f"Officer '{username}' created."))
+
+@app.route("/officers/<int:oid>/deactivate", methods=["POST"])
+def officer_deactivate(oid):
+    r = officer_required()
+    if r: return r
+    me = session.get("officer_name", "officer")
+    if not _fresh_auth(me, request.form.get("admin_password")):
+        return redirect(url_for("officers_page", err="Re-enter your own password to deactivate an officer."))
+    c = conn()
+    row = c.execute("SELECT username FROM officers WHERE id=?", (oid,)).fetchone()
+    if row and row["username"] != me:
+        c.execute("UPDATE officers SET active=0, session_version=session_version+1 WHERE id=?", (oid,))
+        db.log(c, me, "officer_deactivate", f"deactivated '{row['username']}'")
+        c.commit()
+    c.close()
+    return redirect(url_for("officers_page"))
+
+def _fresh_auth(username, password):
+    """Step-up: sensitive actions require the officer's current password again."""
+    c = conn()
+    ok = db.check_officer(c, username, password or "")
+    c.close()
+    return ok
+
+@app.route("/change-password", methods=["GET", "POST"])
+def change_password():
+    if not session.get("officer"):
+        return redirect(url_for("login"))
+    err = None
+    if request.method == "POST":
+        old_pw = request.form.get("old") or ""
+        new_pw = request.form.get("new") or ""
+        me = session.get("officer_name")
+        if len(new_pw) < 12:
+            err = "New password must be at least 12 characters."
+        elif not _fresh_auth(me, old_pw):
+            err = "Current password is wrong."
+        else:
+            import secrets as _s
+            c = conn()
+            salt = _s.token_hex(16)
+            c.execute("UPDATE officers SET password_hash=?, salt=?, must_change=0, "
+                      "session_version=session_version+1 WHERE username=?",
+                      (db.hash_password(new_pw, salt), salt, me))
+            db.log(c, me, "password_change", "officer changed own password")
+            c.commit()
+            row = c.execute("SELECT session_version FROM officers WHERE username=?", (me,)).fetchone()
+            c.close()
+            session["session_version"] = row["session_version"]
+            return redirect(url_for("dashboard", msg="Password changed."))
+    return render_template("change_password.html", err=err)
 
 @app.route("/logout")
 def logout():
@@ -120,9 +228,19 @@ def ingest_upload(feed_id):
     f = request.files.get("file")
     if not f or not (f.filename or "").lower().endswith(".csv"):
         return redirect(url_for("ingest_page", msg="Upload a .csv file."))
+    # provenance: hash the upload content as it streams so the audit log ties
+    # every ingested row batch to an exact file digest, officer and time.
+    import hashlib
+    digest = hashlib.sha256()
+    def _hashing(stream):
+        for chunk in ingest.iter_text(stream):
+            digest.update(chunk.encode("utf-8", "surrogateescape"))
+            yield chunk
     c = conn()
     try:
-        loaded, rejected = ingest.ingest_csv_stream(c, feed_id, ingest.iter_text(f.stream))
+        loaded, rejected = ingest.ingest_csv_stream(c, feed_id, _hashing(f.stream))
+        db.log(c, session.get("officer_name", "officer"), "feed_provenance",
+               f"feed={feed_id} sha256={digest.hexdigest()} loaded={loaded} rejected={rejected}")
         c.commit()
         msg = f"Loaded {loaded} rows, rejected {rejected}."
     except ValueError as e:
@@ -284,6 +402,9 @@ def approve_hold(cid):
     if r: return r
     me = session.get("officer_name", "officer")
     c = conn()
+    if not _fresh_auth(me, request.form.get("password")):
+        c.close()
+        return redirect(url_for("case_detail", cid=cid, err="Re-enter your password to approve a hold."))
     req = c.execute("SELECT * FROM hold_requests WHERE case_id=? AND state='PENDING' ORDER BY id DESC LIMIT 1", (cid,)).fetchone()
     if not req:
         c.close()

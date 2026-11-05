@@ -76,3 +76,12 @@ Still documented limits, honestly stated:
 - The hash chain detects only tampering that does not recompute the whole chain. An attacker with full database write access who rewrites and re-chains the log defeats it; external hash shipping is the stronger control and is not built.
 - Audit sampling at 0.1% has low statistical power on small rolls; the estimate of missed deaths is only meaningful as volume grows.
 - The boilerplate guard checks text similarity, not whether the reasons are supported by the evidence.
+
+## Addendum 2026-11-05 (3): per-officer identity and log anchoring
+
+Built, responding to both hostile reviews naming these as the core walls:
+- Real per-officer accounts: officers table with scrypt (n=2^14, r=8, p=1) salted password hashes; constant-time comparison; sign-in is username+password, no shared key at sign-in. First account ('admin') bootstraps from PIM_OFFICER_KEY only when the officers table is empty; with no key, no account exists and officer pages stay closed. Officers page adds (12+ char passwords) and deactivates accounts; self-deactivation is blocked; every add/deactivate/login is audited. Dual control now compares accounts, defeating the sign-in-twice-under-two-names attack.
+- External log anchoring, free/local: every audit entry hash is dual-written with fsync to a separate anchor file (DB path + '.anchor'). Verification compares the database chain head to the anchor head; a database-only rewrite - even one that drops the triggers and recomputes the chain - is caught (tested). Documented limit: an attacker who rewrites both files defeats it; true external anchoring needs a second system, which is infrastructure, not code.
+- Throttle unchanged (5 failures / 15 min per IP); passwords are never logged; audit rows record usernames, not credentials.
+
+Scorer wall, stated straight: three further candidates (V16 multiregime risk-weighted, V17 consult-feature model, V18 gated-secondary retrain) were each frozen and tested under the freeze-then-score protocol and each failed to beat V15 at its precision. The measured miss mass is fresh unregistered deaths with no signal in any feed; the oracle catch-all tops at 92% recall at 6% precision. No remaining scorer lever exists that does not amount to inventing new synthetic signals, which would be overfitting the benchmark, not improving detection. V15 (99.13% precision / 88.81% recall, blind-verified) stays the frozen final.
