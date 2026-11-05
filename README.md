@@ -82,7 +82,7 @@ Person-level pension, death-registry, electoral and bank data is personal data a
 
 ## Accuracy and privacy
 
-No accuracy figure is claimed anywhere in this system: no production data has been scored, and every probability shown is a model output for human review, not a measurement. The design treats the family appeal as a technical requirement, not an afterthought: every hold carries written reasons, a tracking ID, a deadline and a public appeal route, and every release pays full arrears.
+No production accuracy figure is claimed anywhere in this system: no production data has been scored, and every probability shown is a model output for human review, not a measurement. Development candidates were benchmarked on privately generated synthetic fixtures under a freeze-then-score protocol; the frozen final candidate (V15, 99.13% precision / 88.81% recall on its single blind synthetic benchmark) and every rejected candidate's numbers are recorded in docs/detection-evidence-limits.md. These are synthetic-benchmark measurements, not production accuracy. The design treats the family appeal as a technical requirement, not an afterthought: every hold carries written reasons, a tracking ID, a deadline and a public appeal route, and every release pays full arrears.
 
 ## Author
 

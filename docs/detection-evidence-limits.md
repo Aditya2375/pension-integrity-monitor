@@ -45,3 +45,28 @@ There is no measured uplift percentage for these additions. A prospective shadow
 - PFMS FAQ describes scheme/agency configuration and controlled external-system integration, not open access to arbitrary beneficiary records: https://pfms.nic.in/SitePages/doc/PFMS_DBT_FAQ.pdf
 
 No claim of legal compliance, government approval or production data access follows from these documents. Scheme-specific rules, current interfaces and data agreements must be checked by the responsible authority.
+
+## Final candidate: V15 (frozen 5 November 2026)
+
+The frozen final candidate is V15, a reliability-gated two-expert blend. Its one blind scoring (round 17, 200,000-row fresh set; candidate, features and thresholds frozen before the feeds existed) measured 99.13% precision and 88.81% recall. This is the best measured operating point of the programme and the reference any future candidate must beat head-to-head on the same held-out data at the same precision.
+
+## Full candidate record
+
+Blind rounds are single scorings of a frozen candidate on a fresh set, graded aggregate-only. Local proxy rows are development scorings on privately generated synthetic fixtures (40,000 rows, fresh seed drawn after the rules were frozen, single look, no tuning); they are not blind evidence.
+
+| Candidate / evaluation | Precision | Recall | Decision |
+|---|---:|---:|---|
+| V11 / round 12 blind | 96.19% | 82.69% | Below targets; superseded |
+| V12 / round 14 blind | 98.99% | 82.37% | Below the 99% precision constraint; superseded |
+| V13 / round 15 blind | 99.19% | 88.44% | Superseded by V15's higher recall at comparable precision |
+| V14 / round 16 blind | 96.28% | 88.77% | Rejected: failed the precision constraint |
+| **V15 / round 17 blind** | **99.13%** | **88.81%** | **Final, frozen** |
+| V16 / round 18 blind | 99.70% | 84.85% | Rejected: higher precision but recall regressed |
+| V17 / local proxy only | 98.94-99.29% | 84.93-85.34% | Rejected: precision did not hold at or above 99.13% across fresh proxy seeds |
+| V18 / local proxy only | 98.87% | 85.54% | Rejected: recall margin +2.2 points over V15, below the agreed +3 bar, at 98.87% precision |
+
+V17 added per-person baseline-normalised silence features (baseline z-scores, quantile exceedance, a joint cross-channel silence index, withdrawal discontinuity and drain velocity) on repaired causal fixtures. It beat V15 on its first local proxy seed at equal precision but dipped to 98.94% precision on the next fresh seed, so it did not uniformly meet the frozen operating constraint and was not taken to a blind round.
+
+V18 kept V17 as the primary and added a gated secondary upweighted on the hardest subgroup (recent deaths within 45 days of the snapshot with no registry edge). On a fresh proxy seed it gained +2.2 recall points over V15, below the +3 bar set for spending a blind round, at 98.87% precision, so it was discarded.
+
+The adoption rule throughout: an idea replaces the frozen best only if it beats it head-to-head on the same held-out data at the same precision; otherwise it is discarded with reasons. Model weights, thresholds and training fixtures stay private; only aggregate scores and provenance hashes are retained.
