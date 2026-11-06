@@ -4,8 +4,9 @@
   <h2>Outcome feedback</h2>
   <p class="muted">Confirmed outcomes recalibrate the signal likelihood ratios (Laplace-smoothed) after at least 30 resolved cases with 5+ of each outcome. The base rate is never updated from resolved cases, and unresolved cases never count as negative.</p>
   <p>Confirmed deceased: <b>{{ stats.get('confirmed_deceased', 0) }}</b> &middot; Confirmed alive: <b>{{ stats.get('confirmed_alive', 0) }}</b></p>
-  <p class="muted">Randomly selected unflagged audit cohort: confirmed deceased <b>{{ audit.get('confirmed_deceased', 0) }}</b>, confirmed alive <b>{{ audit.get('confirmed_alive', 0) }}</b>. The deceased share of audit samples gives a rough death rate among never-flagged pensioners; unresolved samples and small counts limit it.</p>
-  <form method="post" action="{{ url_for('recalibrate') }}"><button class="btn">Recalibrate from outcomes</button></form>
+  <p class="muted">Randomly selected unflagged audit cohort: {{ audit.get('selected', 0) }} selected, {{ audit.get('unresolved', 0) }} unresolved, {{ audit.get('confirmed_deceased', 0) }} confirmed deceased, {{ audit.get('confirmed_alive', 0) }} confirmed alive. These are observed counts, not a population rate or recall estimate. Inclusion probabilities are retained per selected case; capped runs and missing adjudication limit inference.</p>
+  <form method="post" action="{{ url_for('recalibrate') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn">Recalibrate from outcomes</button></form>
 </div>
 <div class="card">
   <h2>Current signal weights</h2>

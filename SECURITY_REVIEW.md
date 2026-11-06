@@ -122,3 +122,25 @@ Known walls (need real infrastructure, stated plainly): verified human identity 
 - Crash chaos test: the append is killed at each write boundary (before the first anchor, between anchor and checkpoint, after both anchors but before commit). No state is silently trusted: each shows as intact (nothing durable) or INCOMPLETE for manual review (tested).
 - Hold requests must cite at least one evidence signal actually present on the case; the cited signals are stored and shown to the approving officer. This ties reasons to case evidence but does not prove they are correct.
 - Completeness reconciliation: the dashboard flags any held case with no matching hold_approved audit entry.
+
+## Current audit, 2026-11-06: corrections and verified changes
+
+Earlier addenda are a change history, not proof of current completeness. In particular, earlier "all tests pass" reports ran some test files as scripts without collecting their test functions. The current suite is collected by pytest: 62 tests and four subprocess-crash subtests passed together. This is evidence for those cases, not a security certificate.
+
+Changes verified this pass:
+- CSRF validation on every POST, with tokens in every POST form; missing/wrong tokens fail closed.
+- Admin/reviewer separation: reviewer accounts cannot add/deactivate accounts or change scoring settings.
+- Idempotent migrations add missing columns to older databases.
+- Serialized hold requests/approvals, allowed-state checks, repeated hold rejection, pending cases included in rescoring, and snapshot invalidation on feed/profile changes.
+- Per-run breaker uses its own variable, avoiding collision with probability caps; audit-sample cases count toward capacity too.
+- No internal pre-audit commits in pipeline, feedback recalibration or ingestion batches. Callers own transaction commit.
+- Append refuses inconsistent audit history; missing anchors and legacy unhashed records are not silently declared intact. Real subprocess exits test four persistence boundaries.
+- Tracking tokens use 160 random bits; public lookup discloses minimal status; one open appeal per case; deadline applies regardless of prior appeal status.
+- Queue cases waiting 14 days move ahead of fresh cases; oldest first within that group.
+- Audit cohort selection has a durable table with inclusion probability and selected time; unresolved counts remain visible after rescoring. No population estimate is reported.
+- Upload digests cover original bytes, not re-encoded text. Hash integrity does not authenticate the source.
+- Local releases calculate arrears but do not send payments; recording an outcome no longer silently changes pension payment status.
+
+Both external reviewers still identified possible improvements. Some were already present (session-version checks, snapshot comparisons), some were implemented above, and some were rejected: requiring distinct IP ranges would exclude genuine shared-office reviewers without proving distinct people; delaying release behind a payment confirmation would risk prolonging an erroneous hold. Neither reviewer certified perfection. A description-only review does not substitute for source review.
+
+Remaining limits: privileged host control defeats co-located checkpoints; enrollment cannot prove distinct humans; throttles remain process-local; feed authenticity needs an authenticated upstream; no production accuracy or latency is demonstrated. More testing and engineering can still improve this prototype. We do not claim that the locally actionable list is exhausted.

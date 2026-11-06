@@ -123,6 +123,10 @@ CREATE TABLE IF NOT EXISTS officers (
   session_version INTEGER DEFAULT 0,
   must_change INTEGER DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS audit_samples (
+  case_id INTEGER PRIMARY KEY, selected_at TEXT NOT NULL,
+  inclusion_probability REAL NOT NULL CHECK(inclusion_probability > 0 AND inclusion_probability <= 1)
+);
 CREATE TABLE IF NOT EXISTS hold_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   case_id INTEGER, requester TEXT, reasons TEXT, requested_at TEXT,
@@ -195,6 +199,19 @@ def connect():
 def init_db():
     conn = connect()
     conn.executescript(SCHEMA)
+    # Idempotent upgrade of existing deployments; CREATE TABLE alone does not
+    # add columns to a database created by an earlier version.
+    migrations = {
+        "audit": {"prev_hash": "TEXT", "hash": "TEXT"},
+        "officers": {"session_version": "INTEGER DEFAULT 0", "must_change": "INTEGER DEFAULT 1", "role": "TEXT DEFAULT 'reviewer'"},
+        "hold_requests": {"snapshot_hash": "TEXT", "cites": "TEXT"},
+    }
+    for table, columns in migrations.items():
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, kind in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+    conn.execute("UPDATE officers SET role='admin' WHERE username='admin'")
     for fid, (name, cad) in FEEDS.items():
         conn.execute("INSERT OR IGNORE INTO feeds(feed_id,name,expected_cadence_days) VALUES(?,?,?)", (fid, name, cad))
     for k, v in DEFAULT_SETTINGS.items():
@@ -206,7 +223,7 @@ def init_db():
         key = os.environ.get("PIM_OFFICER_KEY")
         if key:
             create_officer(conn, "admin", key)
-            conn.execute("UPDATE officers SET must_change=0 WHERE username='admin'")
+            conn.execute("UPDATE officers SET must_change=0, role='admin' WHERE username='admin'")
     for sig, (lp, lm) in DEFAULT_WEIGHTS.items():
         conn.execute("INSERT OR IGNORE INTO weights(signal,lr_plus,lr_minus) VALUES(?,?,?)", (sig, lp, lm))
     conn.commit()
@@ -240,6 +257,11 @@ def log(conn, actor, action, detail=""):
     row's hash, so later edits or deletions are detectable by verify_audit()."""
     import hashlib
     from datetime import datetime
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    status, _, _ = verify_audit(conn)
+    if status is not True:
+        raise sqlite3.IntegrityError("Audit history requires manual reconciliation; refusing to append")
     prev = conn.execute("SELECT hash FROM audit ORDER BY id DESC LIMIT 1").fetchone()
     prev_hash = prev["hash"] if prev else "GENESIS"
     ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
@@ -271,7 +293,7 @@ def check_officer(conn, username, password):
 
 def _anchor_path():
     import os
-    return os.environ.get("PIM_DB", "pim.sqlite3") + ".anchor"
+    return DB_PATH + ".anchor"
 
 def _checkpoint_path():
     """Second anchor copy in a different directory (PIM_CHECKPOINT_DIR, default
@@ -281,7 +303,7 @@ def _checkpoint_path():
     import os, hashlib
     d = os.environ.get("PIM_CHECKPOINT_DIR") or os.path.join(os.path.expanduser("~"), ".pim-checkpoints")
     os.makedirs(d, exist_ok=True)
-    tag = hashlib.sha256(os.path.abspath(os.environ.get("PIM_DB", "pim.sqlite3")).encode()).hexdigest()[:16]
+    tag = hashlib.sha256(os.path.abspath(DB_PATH).encode()).hexdigest()[:16]
     return os.path.join(d, tag + ".checkpoint")
 
 def _append_fsync(path, line):
@@ -331,9 +353,8 @@ def verify_audit(conn):
     rows = conn.execute("SELECT id,ts,actor,action,detail,prev_hash,hash FROM audit ORDER BY id").fetchall()
     prev = "GENESIS"
     for r in rows:
-        if r["hash"] is None:  # pre-chain legacy row
-            prev = r["prev_hash"] or prev
-            continue
+        if r["hash"] is None:
+            return None, r["id"], len(rows)  # legacy history is unverified, not silently trusted
         if r["prev_hash"] != prev:
             return False, r["id"], len(rows)
         body = f"{prev}|{r['ts']}|{r['actor']}|{r['action']}|{r['detail']}"
@@ -342,8 +363,13 @@ def verify_audit(conn):
         prev = r["hash"]
     last = rows[-1] if rows else None
     incomplete = None
-    for head in (anchor_head(), checkpoint_head()):
+    try:
+        heads = (anchor_head(), checkpoint_head())
+    except (ValueError, IndexError, OSError):
+        return False, last["id"] if last else 0, len(rows)
+    for head in heads:
         if head is None:
+            if rows: incomplete = last["id"]
             continue
         if last and last["hash"] is not None and last["hash"] == head[1]:
             continue

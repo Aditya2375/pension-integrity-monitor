@@ -303,7 +303,7 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
     eroll_rows = {r["epic_number"]: r for r in F.eroll_del}
 
     made = 0
-    cap = int(db.get_setting(conn, "max_new_cases_per_run") or 500)
+    case_cap = int(db.get_setting(conn, "max_new_cases_per_run") or 500)
     breaker = False
     flagged_pids = set()
     for p in all_pm:
@@ -480,7 +480,7 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
         reg = reg_by_pid.get(pid, (None, None, None))[2]
 
         existing = conn.execute(
-            "SELECT id FROM cases WHERE pensioner_id=? AND state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION','HELD')",
+            "SELECT id FROM cases WHERE pensioner_id=? AND state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION','HELD','HOLD_PENDING')",
             (pid,)).fetchone()
         if existing:
             cid = existing["id"]
@@ -488,7 +488,7 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
                          (base_rate, round(lo, 4), score, priority, reg, cid))
             conn.execute("DELETE FROM signals WHERE case_id=?", (cid,))
         else:
-            if made >= cap:
+            if made >= case_cap:
                 breaker = True
                 continue
             cur = conn.execute(
@@ -506,7 +506,7 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
                          (cid, name, present, str(d), lp, lm))
     # randomized audit sampling: a small random share of still-paid pensioners
     # with no flags goes into the queue as audit-sample cases. Their outcomes are
-    # the only unbiased ground-truth stream; flagged-case resolutions are
+    # a random selection stream, still subject to adjudication bias; flagged-case resolutions are
     # selection-biased and must not calibrate the model alone.
     rate = float(db.get_setting(conn, "audit_sample_rate") or 0.0)
     sampled = 0
@@ -524,21 +524,25 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
             if existing:
                 continue
             if rng.random() < rate:
+                if made + sampled >= case_cap:
+                    breaker = True
+                    continue
                 cur = conn.execute(
                     "INSERT INTO cases(pensioner_id,created_at,base_rate,log_odds,probability,priority,state,matched_death_id) "
                     "VALUES(?,?,?,?,?,0,'FLAGGED',NULL)",
                     (pid, datetime.utcnow().isoformat(timespec="seconds") + "Z",
                      base_rate, round(scoring.logit(base_rate), 4), round(base_rate, 4)))
                 acid = cur.lastrowid
+                conn.execute("INSERT INTO audit_samples(case_id,selected_at,inclusion_probability) VALUES(?,?,?)",
+                             (acid, datetime.utcnow().isoformat(timespec="seconds") + "Z", rate))
                 conn.execute("INSERT INTO signals(case_id,signal,present,value,lr_plus,lr_minus) VALUES(?,?,?,?,?,?)",
                              (acid, "audit_sample", 1, "random integrity audit sample", 1.0, 1.0))
                 for step in VERIFICATION_STEPS:
                     conn.execute("INSERT INTO verifications(case_id,step) VALUES(?,?)", (acid, step))
                 sampled += 1
-    conn.commit()
     if breaker:
         db.log(conn, "pipeline", "circuit_breaker",
-               f"case creation halted at cap={cap}; possible feed flooding - investigate before rerun")
+               f"case creation halted at cap={case_cap}; possible feed flooding - investigate before rerun")
     # drip-flood watch: a per-run cap alone misses slow flooding that stays
     # under the cap every run. Sum recent runs and warn on anomalous volume.
     import re
@@ -548,9 +552,9 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
     counts = [int(m.group(1)) for r in recent
               if (m := re.search(r"new_cases=(\d+)", r["detail"]))]
     window_total = made + sum(counts)
-    if counts and window_total > 3 * cap:
+    if counts and window_total > 3 * case_cap:
         watch = True
         db.log(conn, "pipeline", "flood_watch",
-               f"cumulative new-case volume {window_total} over last {len(counts)+1} runs exceeds 3x cap={cap}; possible drip flooding - investigate feed integrity")
+               f"cumulative new-case volume {window_total} over last {len(counts)+1} runs exceeds 3x cap={case_cap}; possible drip flooding - investigate feed integrity")
     db.log(conn, "pipeline", "flag_run", f"new_cases={made} audit_samples={sampled} threshold={p_star:.3f} breaker={breaker}")
     return made, p_star, breaker, watch

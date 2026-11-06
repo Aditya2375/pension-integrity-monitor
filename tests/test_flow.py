@@ -11,6 +11,8 @@ from pim import db, health
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
 def client():
+    from tests.http_client import FormClient
+    app_module.app.test_client_class = FormClient
     app_module.app.config["TESTING"] = True
     return app_module.app.test_client()
 

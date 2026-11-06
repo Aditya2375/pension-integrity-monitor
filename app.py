@@ -33,6 +33,20 @@ def _record_fail(ip):
     with _LOCK:
         _ATTEMPTS.setdefault(ip, []).append(time.time())
 
+@app.before_request
+def csrf_guard():
+    if request.method == "POST":
+        expected = session.get("csrf_token", "")
+        supplied = request.form.get("csrf_token", "")
+        if not expected or not secrets.compare_digest(expected, supplied):
+            abort(400, "Invalid form token. Reload the page and try again.")
+
+@app.context_processor
+def csrf_context():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_urlsafe(32)
+    return {"csrf_token": session["csrf_token"]}
+
 @app.after_request
 def security_headers(resp):
     resp.headers["X-Content-Type-Options"] = "nosniff"
@@ -75,7 +89,7 @@ def login():
     if not has_officers:
         return render_template("login.html", err="No officer account exists on this deployment. Set PIM_OFFICER_KEY before first start to bootstrap the admin account.")
     if request.method == "POST":
-        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?").split(",")[0].strip()
+        ip = (request.access_route[0] if os.environ.get("PIM_TRUST_PROXY") == "1" else request.remote_addr) or "?"
         username = (request.form.get("username") or "").strip()[:40]
         if _throttled(ip, 5, 900) or _throttled("acct:" + username.lower(), 8, 900):
             err = "Too many attempts. Try again in 15 minutes."
@@ -105,9 +119,19 @@ def login():
             err = "Wrong username or password."
     return render_template("login.html", err=err)
 
+def admin_required():
+    r = officer_required()
+    if r: return r
+    c = conn()
+    row = c.execute("SELECT role FROM officers WHERE username=?", (session.get("officer_name"),)).fetchone()
+    c.close()
+    if not row or row["role"] != "admin":
+        abort(403)
+    return None
+
 @app.route("/officers")
 def officers_page():
-    r = officer_required()
+    r = admin_required()
     if r: return r
     c = conn()
     rows = c.execute("SELECT id,username,active,created_at FROM officers ORDER BY username").fetchall()
@@ -116,7 +140,7 @@ def officers_page():
 
 @app.route("/officers/add", methods=["POST"])
 def officer_add():
-    r = officer_required()
+    r = admin_required()
     if r: return r
     username = (request.form.get("username") or "").strip()[:40]
     pw = request.form.get("password") or ""
@@ -138,7 +162,7 @@ def officer_add():
 
 @app.route("/officers/<int:oid>/deactivate", methods=["POST"])
 def officer_deactivate(oid):
-    r = officer_required()
+    r = admin_required()
     if r: return r
     me = session.get("officer_name", "officer")
     if not _fresh_auth(me, request.form.get("admin_password")):
@@ -154,15 +178,19 @@ def officer_deactivate(oid):
 
 def _fresh_auth(username, password):
     """Step-up: sensitive actions require the officer's current password again."""
+    key = "stepup:" + (username or "").lower()
+    if _throttled(key, 8, 900):
+        return False
     c = conn()
     ok = db.check_officer(c, username, password or "")
     c.close()
+    if not ok: _record_fail(key)
     return ok
 
 @app.route("/change-password", methods=["GET", "POST"])
 def change_password():
-    if not session.get("officer"):
-        return redirect(url_for("login"))
+    r = officer_required()
+    if r: return r
     err = None
     if request.method == "POST":
         old_pw = request.form.get("old") or ""
@@ -233,22 +261,26 @@ def ingest_upload(feed_id):
     f = request.files.get("file")
     if not f or not (f.filename or "").lower().endswith(".csv"):
         return redirect(url_for("ingest_page", msg="Upload a .csv file."))
-    # provenance: hash the upload content as it streams so the audit log ties
-    # every ingested row batch to an exact file digest, officer and time.
-    import hashlib
+    # Hash original bytes, not decoded/re-encoded text. Stage to a bounded
+    # temporary file so parsing and the provenance digest refer to identical input.
+    import hashlib, tempfile, io
     digest = hashlib.sha256()
-    def _hashing(stream):
-        for chunk in ingest.iter_text(stream):
-            digest.update(chunk.encode("utf-8", "surrogateescape"))
-            yield chunk
     c = conn()
     try:
-        loaded, rejected = ingest.ingest_csv_stream(c, feed_id, _hashing(f.stream))
+        with tempfile.TemporaryFile() as staged:
+            while True:
+                chunk = f.stream.read(65536)
+                if not chunk: break
+                digest.update(chunk)
+                staged.write(chunk)
+            staged.seek(0)
+            loaded, rejected = ingest.ingest_csv_stream(c, feed_id, ingest.iter_text(staged))
         db.log(c, session.get("officer_name", "officer"), "feed_provenance",
                f"feed={feed_id} sha256={digest.hexdigest()} loaded={loaded} rejected={rejected}")
         c.commit()
         msg = f"Loaded {loaded} rows, rejected {rejected}."
-    except ValueError as e:
+    except (ValueError, UnicodeError) as e:
+        c.rollback()
         msg = "Rejected file: " + str(e)
     c.close()
     return redirect(url_for("ingest_page", msg=msg))
@@ -288,7 +320,9 @@ def queue():
         "(SELECT COUNT(*) FROM signals s WHERE s.case_id=cases.id AND s.signal='audit_sample') AS audit FROM cases "
         "JOIN pension_master USING(pensioner_id) "
         "WHERE cases.state IN ('FLAGGED','UNDER_REVIEW','VERIFICATION','HOLD_PENDING') "
-        "ORDER BY priority DESC, probability DESC").fetchall()
+        "ORDER BY CASE WHEN julianday('now')-julianday(created_at) >= 14 THEN 1 ELSE 0 END DESC, "
+        "CASE WHEN julianday('now')-julianday(created_at) >= 14 THEN created_at END ASC, "
+        "priority DESC, probability DESC").fetchall()
     p_star = scoring.cost_threshold(float(db.get_setting(c, "cost_false_hold")),
                                     float(db.get_setting(c, "cost_missed_death")))
     c.close()
@@ -338,13 +372,13 @@ def verify(cid):
     c.execute("UPDATE verifications SET done=?, note=? WHERE id=? AND case_id=?",
               (done, request.form.get("note", ""), vid, cid))
     c.execute("UPDATE cases SET state='VERIFICATION' WHERE id=? AND state IN ('FLAGGED','UNDER_REVIEW')", (cid,))
-    db.log(c, "officer", "verify_step", f"case={cid} step={vid} done={done}")
+    db.log(c, session.get("officer_name", "officer"), "verify_step", f"case={cid} step={vid} done={done}")
     c.commit()
     c.close()
     return redirect(url_for("case_detail", cid=cid))
 
 def _tracking_id():
-    return "APL-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+    return "APL-" + secrets.token_hex(20).upper()
 
 MIN_REASON_CHARS = 40
 
@@ -355,7 +389,10 @@ def _case_snapshot(c, cid):
     sigs = c.execute("SELECT signal,present,value FROM signals WHERE case_id=? ORDER BY signal", (cid,)).fetchall()
     ver = c.execute("SELECT step,done,note FROM verifications WHERE case_id=? ORDER BY step", (cid,)).fetchall()
     case = c.execute("SELECT probability,matched_death_id FROM cases WHERE id=?", (cid,)).fetchone()
-    body = repr(([dict(s) for s in sigs], [dict(v) for v in ver], case["probability"], case["matched_death_id"]))
+    feeds = [dict(r) for r in c.execute("SELECT feed_id,last_ingest_at,rows_loaded,rows_rejected FROM feeds ORDER BY feed_id")]
+    profile = c.execute("SELECT p.* FROM pension_master p JOIN cases c USING(pensioner_id) WHERE c.id=?", (cid,)).fetchone()
+    provenance_head = c.execute("SELECT MAX(id) FROM audit WHERE action='feed_provenance'").fetchone()[0]
+    body = repr(([dict(s) for s in sigs], [dict(v) for v in ver], case["probability"], case["matched_death_id"], feeds, dict(profile) if profile else None, provenance_head))
     return hashlib.sha256(body.encode()).hexdigest()
 
 def _boilerplate(c, reasons):
@@ -378,8 +415,13 @@ def hold(cid):
     HOLD_PENDING; a DIFFERENT officer must approve it before anything is held."""
     r = officer_required()
     if r: return r
-    reasons = (request.form.get("reasons") or "").strip()
+    reasons = (request.form.get("reasons") or "").strip()[:4000]
     c = conn()
+    c.execute("BEGIN IMMEDIATE")
+    case = _case_or_404(c, cid)
+    if case["state"] not in ("FLAGGED", "UNDER_REVIEW", "VERIFICATION"):
+        c.close()
+        abort(409)
     ver = c.execute("SELECT COUNT(*) total, SUM(done) done FROM verifications WHERE case_id=?", (cid,)).fetchone()
     if len(reasons) < MIN_REASON_CHARS:
         c.close()
@@ -415,8 +457,10 @@ def approve_hold(cid):
     if not _fresh_auth(me, request.form.get("password")):
         c.close()
         return redirect(url_for("case_detail", cid=cid, err="Re-enter your password to approve a hold."))
+    c.execute("BEGIN IMMEDIATE")
+    case_state = _case_or_404(c, cid)["state"]
     req = c.execute("SELECT * FROM hold_requests WHERE case_id=? AND state='PENDING' ORDER BY id DESC LIMIT 1", (cid,)).fetchone()
-    if not req:
+    if not req or case_state != "HOLD_PENDING":
         c.close()
         return redirect(url_for("case_detail", cid=cid, err="No pending hold request."))
     if req["requester"] == me:
@@ -466,7 +510,10 @@ def release(cid):
     r = officer_required()
     if r: return r
     c = conn()
+    c.execute("BEGIN IMMEDIATE")
     case = _case_or_404(c, cid)
+    if case["state"] != "HELD":
+        c.close(); abort(409)
     arrears = 0.0
     if case["held_at"]:
         held = datetime.fromisoformat(case["held_at"].replace("Z", ""))
@@ -476,10 +523,10 @@ def release(cid):
     c.execute("UPDATE cases SET state='RELEASED', released_at=?, arrears=? WHERE id=?",
               (datetime.utcnow().isoformat(timespec="seconds") + "Z", arrears, cid))
     c.execute("UPDATE pension_master SET pension_status='ACTIVE' WHERE pensioner_id=?", (case["pensioner_id"],))
-    db.log(c, "officer", "release", f"case={cid} arrears={arrears}")
+    db.log(c, session.get("officer_name", "officer"), "release", f"case={cid} arrears={arrears}")
     c.commit()
     c.close()
-    return redirect(url_for("case_detail", cid=cid, msg=f"Released with full arrears of {arrears:,.2f}."))
+    return redirect(url_for("case_detail", cid=cid, msg=f"Released in the local workflow with full arrears calculated at {arrears:,.2f}. No payment has been sent."))
 
 @app.route("/case/<int:cid>/dismiss", methods=["POST"])
 def dismiss(cid):
@@ -487,8 +534,13 @@ def dismiss(cid):
     if r: return r
     note = (request.form.get("note") or "").strip()
     c = conn()
+    c.execute("BEGIN IMMEDIATE")
+    case = _case_or_404(c, cid)
+    if case["state"] not in ("FLAGGED", "UNDER_REVIEW", "VERIFICATION", "HOLD_PENDING"):
+        c.close(); abort(409)
+    c.execute("UPDATE hold_requests SET state='CANCELLED' WHERE case_id=? AND state='PENDING'", (cid,))
     c.execute("UPDATE cases SET state='DISMISSED', outcome_note=? WHERE id=?", (note, cid))
-    db.log(c, "officer", "dismiss", f"case={cid} note={note[:80]}")
+    db.log(c, session.get("officer_name", "officer"), "dismiss", f"case={cid} note={note[:80]}")
     c.commit()
     c.close()
     return redirect(url_for("queue"))
@@ -504,7 +556,8 @@ def outcome(cid):
     feedback.record_outcome(c, cid, o, request.form.get("note", ""))
     if o == "confirmed_deceased":
         case = c.execute("SELECT pensioner_id FROM cases WHERE id=?", (cid,)).fetchone()
-        c.execute("UPDATE pension_master SET pension_status='DECEASED' WHERE pensioner_id=?", (case["pensioner_id"],))
+        # An outcome is a recorded finding, not authority to stop payment.
+        # Only the separately reviewed hold workflow changes pension status.
         c.execute("UPDATE cases SET state='CLOSED_CONFIRMED' WHERE id=? AND state!='RELEASED'", (cid,))
     c.commit()
     c.close()
@@ -556,7 +609,7 @@ def appeal_resolve(aid):
     c = conn()
     c.execute("UPDATE appeals SET status=?, decision=?, resolved_at=? WHERE id=?",
               (status, decision, datetime.utcnow().isoformat(timespec="seconds") + "Z", aid))
-    db.log(c, "officer", "appeal_resolve", f"appeal={aid} status={status}")
+    db.log(c, session.get("officer_name", "officer"), "appeal_resolve", f"appeal={aid} status={status}")
     c.commit()
     c.close()
     return redirect(url_for("appeals"))
@@ -566,12 +619,12 @@ def appeal_portal():
     c = conn()
     found, err = None, None
     if request.method == "POST":
-        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?").split(",")[0].strip()
+        ip = (request.access_route[0] if os.environ.get("PIM_TRUST_PROXY") == "1" else request.remote_addr) or "?"
         if _throttled(ip, 20, 60):
             c.close()
             return render_template("appeal.html", err="Too many attempts. Please wait a minute and try again.", found=None, deadline=None, submitted=False)
         _record_fail(ip)
-        tid = (request.form.get("tracking_id") or "").strip().upper()[:20]
+        tid = (request.form.get("tracking_id") or "").strip().upper()[:64]
         row = c.execute(
             "SELECT appeals.*, cases.held_at, cases.state, pension_master.scheme_code AS scheme FROM appeals "
             "JOIN cases ON appeals.case_id=cases.id JOIN pension_master USING(pensioner_id) "
@@ -581,8 +634,10 @@ def appeal_portal():
         elif request.form.get("statement"):
             window = int(db.get_setting(c, "appeal_window_days"))
             held = datetime.fromisoformat(row["held_at"].replace("Z", "")) if row["held_at"] else None
-            if held and datetime.utcnow() > held + timedelta(days=window) and row["status"] in ("NOTICE",):
+            if held and datetime.utcnow() > held + timedelta(days=window):
                 err = "The appeal window for this case has closed."
+            elif c.execute("SELECT COUNT(*) FROM appeals WHERE case_id=? AND status='OPEN'", (row["case_id"],)).fetchone()[0]:
+                err = "An appeal is already open for this case. Please wait for its review."
             else:
                 c.execute(
                     "INSERT INTO appeals(tracking_id,case_id,submitted_at,statement,contact,status) "
@@ -619,7 +674,7 @@ def health_page():
 
 @app.route("/settings", methods=["GET", "POST"])
 def settings_page():
-    r = officer_required()
+    r = admin_required()
     if r: return r
     c = conn()
     msg = None

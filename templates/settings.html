@@ -5,6 +5,7 @@
   <h2>Scoring settings</h2>
   <p class="muted">Priority threshold from costs: p* = C(false hold) / (C(false hold) + C(missed death)) = <b>{{ '%.3f'|format(p_star) }}</b>. These govern ranking only.</p>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="grid">
       <div><label>Base rate (annual unreported-death prevalence)</label><input type="text" name="base_rate" value="{{ s['base_rate'] }}"></div>
       <div><label>Cost of a false hold</label><input type="text" name="cost_false_hold" value="{{ s['cost_false_hold'] }}"></div>

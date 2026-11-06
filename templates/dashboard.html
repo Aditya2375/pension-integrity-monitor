@@ -4,7 +4,7 @@
   <div class="stat"><div class="n">{{ counts.get('FLAGGED', 0) + counts.get('UNDER_REVIEW', 0) + counts.get('VERIFICATION', 0) }}</div><div class="l">Open cases in review</div></div>
   <div class="stat"><div class="n">{{ counts.get('HELD', 0) }}</div><div class="l">Pensions on hold (with written reasons)</div></div>
   <div class="stat"><div class="n">{{ overdue }}</div><div class="l">Appeals open past the response SLA</div></div>
-  <div class="stat"><div class="n">{{ counts.get('RELEASED', 0) }}</div><div class="l">Released with arrears</div></div>
+  <div class="stat"><div class="n">{{ counts.get('RELEASED', 0) }}</div><div class="l">Released locally, arrears calculated</div></div>
   <div class="stat"><div class="n">{{ stats.get('confirmed_deceased', 0) }}</div><div class="l">Confirmed deceased</div></div>
   <div class="stat"><div class="n">{{ stats.get('confirmed_alive', 0) }}</div><div class="l">Confirmed alive</div></div>
 </div>
@@ -40,7 +40,7 @@
   <p><span class="pill warn">TAMPER DETECTED</span> The audit log chain breaks at entry #{{ audit_bad }}. Treat the log as compromised and investigate before relying on it.</p>
   {% endif %}
   {% if recon %}<p><span class="pill warn">UNRECONCILED</span> {{ recon|join('; ') }}</p>{% endif %}
-  <p class="muted">Every officer and pipeline action is appended to a hash-chained log; edits or deletions of past entries break the chain and are detected here.</p>
+  <p class="muted">Recorded actions are checked against a local hash chain and checkpoint files. Missing or inconsistent history requires review. A host administrator who controls every copy can defeat these checks.</p>
 </div>
 
 <div class="card">

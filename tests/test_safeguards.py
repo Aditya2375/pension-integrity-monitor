@@ -11,6 +11,8 @@ from pim import db, pipeline
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
 def client():
+    from tests.http_client import FormClient
+    app_module.app.test_client_class = FormClient
     app_module.app.config["TESTING"] = True
     return app_module.app.test_client()
 
@@ -86,6 +88,11 @@ def test_circuit_breaker_and_audit_sampling():
     # nothing was auto-held even under flooding
     held = conn.execute("SELECT COUNT(*) n FROM cases WHERE state='HELD'").fetchone()
     assert held["n"] == 0
+    # Samples also respect the cap. A separate run with capacity samples clean rows.
+    assert conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0] <= 1
+    conn.execute("UPDATE settings SET value='10' WHERE key='max_new_cases_per_run'")
+    conn.commit()
+    pipeline.run_pipeline(conn, rng=random.Random(7)); conn.commit()
     # audit sample created for unflagged still-paid pensioner(s), clearly labeled
     samples = conn.execute(
         "SELECT cases.id FROM cases JOIN signals s ON s.case_id=cases.id WHERE s.signal='audit_sample'").fetchall()
@@ -202,7 +209,7 @@ def test_officer_accounts():
     conn = db.connect()
     oid = conn.execute("SELECT id FROM officers WHERE username='rsharma'").fetchone()["id"]
     conn.close()
-    c.post(f"/officers/{oid}/deactivate", data={"admin_password": "rsharma-new-pass-2"}, follow_redirects=True)
+    assert c.post(f"/officers/{oid}/deactivate", data={"admin_password": "rsharma-new-pass-2"}).status_code == 403
     conn = db.connect()
     assert conn.execute("SELECT active FROM officers WHERE id=?", (oid,)).fetchone()["active"] == 1
     conn.close()

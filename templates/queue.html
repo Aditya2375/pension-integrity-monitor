@@ -2,9 +2,9 @@
 {% block body %}
 <div class="card">
   <h2>Officer review queue</h2>
-  <p class="muted">Ranked by calibrated probability. Priority line: p* = {{ '%.2f'|format(p_star) }} from the configured costs. This queue never holds a pension; officers do, after verification, with written reasons.</p>
-  <p class="muted"><b>Tier 1: 99.13% precision, 88.81% recall</b> (blind-verified frozen benchmark). Of 1,000 tier-1 reviews about 991 confirm a death. Cases above p* carry the priority pill: this is the number that describes the system.</p>
-  <p class="muted"><b>Speed.</b> Scoring is event-driven: the moment an evidence record is ingested, the affected pensioners are rescored with the same frozen rules, so a flag fires within minutes of the record landing. 99.7% of tier-1 flags are documentary (registry, hospital, electoral). The real wait is upstream, and it depends on the source: hospital DIED records are dated the day of death and cover about 43% of tier-1 flags (same-day flag if the hospital feed streams daily), registry records land a median of 18-19 days after death (fastest decile 5-6 days), electoral deletions about 50 days. No scoring design can flag before a signal exists; scoring latency itself is minutes.</p>
+  <p class="muted">Cases waiting 14 days or longer come first, oldest first; newer cases are ranked by score. Scores are model outputs, not validated probabilities. Priority line: p* = {{ '%.2f'|format(p_star) }} from the configured costs. This queue never holds a pension; officers do, after verification, with written reasons.</p>
+  <p class="muted"><b>Tier 1: 99.13% precision, 88.81% recall</b> (one frozen blind synthetic benchmark only, not operational accuracy). Of 1,000 tier-1 reviews about 991 confirm a death. Cases above p* carry the priority pill: this benchmark does not establish real-world performance.</p>
+  <p class="muted"><b>Speed.</b> This Flask review prototype runs scoring when an officer selects Run pipeline. The separate detector research supports ingestion-triggered scoring, but this page does not promise automatic rescoring or a measured minutes-level latency. Upstream evidence delay remains a separate limit.</p>
   
   {% if rows %}
   <table>

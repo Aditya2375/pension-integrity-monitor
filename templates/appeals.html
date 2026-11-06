@@ -15,6 +15,7 @@
       <td>
         {% if a['status'] == 'OPEN' %}
         <form method="post" action="{{ url_for('appeal_resolve', aid=a['id']) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="text" name="decision" placeholder="decision note" style="margin-bottom:6px">
           <button class="btn" name="status" value="RELEASED">Uphold appeal, release</button>
           <button class="btn ghost" name="status" value="UPHELD">Reject appeal</button>

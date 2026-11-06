@@ -4,6 +4,7 @@
   <h2>Officer sign in</h2>
   {% if err %}<div class="err">{{ err }}</div>{% endif %}
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Officer username</label>
     <input type="text" name="username" maxlength="40" autofocus autocomplete="username">
     <label style="margin-top:12px">Password</label>

@@ -42,19 +42,18 @@ def recalibrate(conn):
         lr_minus = round((1 - p_given_dec) / (1 - p_given_alive), 4)
         conn.execute("UPDATE weights SET lr_plus=?, lr_minus=?, updated_at=? WHERE signal=?",
                      (max(lr_plus, 0.05), max(lr_minus, 0.05), now, sig))
-    conn.commit()
     db.log(conn, "feedback", "recalibrate", f"resolved={len(resolved)} (base rate unchanged)")
     return None, f"recalibrated LRs from {len(resolved)} resolved cases; base rate unchanged"
 
 def audit_stats(conn):
-    """Outcomes of randomized audit-sample cases only. This is the unbiased
-    stream: it estimates the death rate among pensioners the system did NOT
-    flag, which flagged-case resolutions can never measure."""
+    """Observed counts only, not a population estimate. Retain samples even if
+    subsequent rescoring replaces their signals; unresolved cases stay visible."""
     rows = conn.execute(
-        "SELECT cases.outcome, COUNT(*) n FROM cases "
-        "JOIN signals s ON s.case_id=cases.id AND s.signal='audit_sample' "
-        "WHERE cases.outcome IS NOT NULL GROUP BY cases.outcome").fetchall()
-    return {r["outcome"]: r["n"] for r in rows}
+        "SELECT c.outcome, COUNT(*) n FROM audit_samples a JOIN cases c ON c.id=a.case_id "
+        "GROUP BY c.outcome").fetchall()
+    result = {(r["outcome"] or "unresolved"): r["n"] for r in rows}
+    result["selected"] = sum(result.values())
+    return result
 
 def stats(conn):
     rows = conn.execute(
