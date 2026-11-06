@@ -39,6 +39,7 @@
   {% else %}
   <p><span class="pill warn">TAMPER DETECTED</span> The audit log chain breaks at entry #{{ audit_bad }}. Treat the log as compromised and investigate before relying on it.</p>
   {% endif %}
+  {% if recon %}<p><span class="pill warn">UNRECONCILED</span> {{ recon|join('; ') }}</p>{% endif %}
   <p class="muted">Every officer and pipeline action is appended to a hash-chained log; edits or deletions of past entries break the chain and are detected here.</p>
 </div>
 

@@ -3,6 +3,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 os.environ["PIM_DB"] = tempfile.mktemp(suffix=".sqlite3")
 os.environ.setdefault("PIM_OFFICER_KEY", "officer")
 os.environ.setdefault("PIM_INSECURE_HTTP", "1")
+os.environ["PIM_CHECKPOINT_DIR"] = tempfile.mkdtemp()
 
 import app as app_module
 from pim import db, health
@@ -79,8 +80,13 @@ def test_end_to_end():
     r = c.post(f"/case/{cid}/hold", data={"reasons": "too short"}, follow_redirects=True)
     assert b"at least 40 characters" in r.data
 
-    # hold request only pends; no tracking ID yet
+    # a hold must cite evidence present on the case
     r = c.post(f"/case/{cid}/hold", data={"reasons": "Registry match verified on all four steps against district records."}, follow_redirects=True)
+    assert b"Cite at least one evidence signal" in r.data
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "Registry match verified on all four steps against district records.", "cites": ["not_a_signal"]}, follow_redirects=True)
+    assert b"Cite at least one evidence signal" in r.data
+    # hold request only pends; no tracking ID yet
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "Registry match verified on all four steps against district records.", "cites": ["death_registry_match"]}, follow_redirects=True)
     assert b"second officer must approve" in r.data
     conn = db.connect()
     case = conn.execute("SELECT * FROM cases WHERE id=?", (cid,)).fetchone()

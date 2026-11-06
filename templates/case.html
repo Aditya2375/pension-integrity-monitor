@@ -60,6 +60,8 @@
   <p class="muted">Hold already requested by <b>{{ pending['requester'] }}</b> at {{ pending['requested_at'] }}; awaiting a second officer's decision below.</p>
   {% else %}
   <form method="post" action="{{ url_for('hold', cid=case['id']) }}">
+    <label>Evidence you are relying on (tick at least one)</label>
+    <p>{% for s in sigs %}{% if s['present'] and not s['signal'].endswith('_cap') and s['signal'] != 'audit_sample' %}<label style="display:inline-block;margin-right:14px"><input type="checkbox" name="cites" value="{{ s['signal'] }}"> {{ s['signal'].replace('_',' ') }}</label>{% endif %}{% endfor %}</p>
     <label>Written reasons (required; shared with the family on request)</label>
     <textarea name="reasons" required></textarea>
     <p><button class="btn warn">Request hold</button></p>
@@ -78,6 +80,7 @@
   <h2>Pending hold - second officer decision</h2>
   <p class="muted">Requested by <b>{{ pending['requester'] }}</b> at {{ pending['requested_at'] }}.</p>
   <p>Reasons given: {{ pending['reasons'] }}</p>
+  <p>Evidence cited: <b>{{ (pending['cites'] or '').replace('_',' ').replace(',', ', ') }}</b></p>
   {% if pending['requester'] == officer_name %}
   <p class="err">You requested this hold. Dual control requires a different officer to approve or reject it; sign in under another officer name.</p>
   {% else %}

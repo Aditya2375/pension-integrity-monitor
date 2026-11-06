@@ -3,6 +3,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 os.environ["PIM_DB"] = tempfile.mkstemp(suffix=".sqlite3")[1]
 os.environ.setdefault("PIM_OFFICER_KEY", "officer")
 os.environ.setdefault("PIM_INSECURE_HTTP", "1")
+os.environ["PIM_CHECKPOINT_DIR"] = tempfile.mkdtemp()
 from app import app
 
 PUBLIC_GET = {"/login", "/appeal", "/context", "/templates/pension_master.csv", "/static/style.css"}

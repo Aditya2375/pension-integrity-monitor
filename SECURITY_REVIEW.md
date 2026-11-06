@@ -115,3 +115,10 @@ Known walls (need real infrastructure, stated plainly): verified human identity 
 - Dashboard shows the count of appeals open past the response SLA.
 - "Unbiased outcome stream" wording replaced with "randomly selected unflagged audit cohort"; estimates depend on adjudication, unresolved samples and sample size.
 - Open, documented: rolling back database and anchor file together to an older consistent copy is undetected; crash recovery is reported (INCOMPLETE) but not chaos-tested at every write boundary; reason-quality checks are text similarity only.
+
+## Addendum 2026-11-06 (2): round-4 local items built
+
+- Rollback detection on one host: every audit hash is also written, fsynced, to a checkpoint file in a different directory (PIM_CHECKPOINT_DIR, default ~/.pim-checkpoints). Restoring an older database plus the local anchor is caught because the checkpoint is ahead (tested). Limit: someone who rewrites all three copies, or who can write the checkpoint directory, defeats it. Pointing it at a separately permissioned location raises the bar; true protection needs another system.
+- Crash chaos test: the append is killed at each write boundary (before the first anchor, between anchor and checkpoint, after both anchors but before commit). No state is silently trusted: each shows as intact (nothing durable) or INCOMPLETE for manual review (tested).
+- Hold requests must cite at least one evidence signal actually present on the case; the cited signals are stored and shown to the approving officer. This ties reasons to case evidence but does not prove they are correct.
+- Completeness reconciliation: the dashboard flags any held case with no matching hold_approved audit entry.

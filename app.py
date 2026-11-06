@@ -206,12 +206,13 @@ def dashboard():
     fh = health.feed_health(c)
     stats = feedback.stats(c)
     audit_ok, audit_bad, audit_n = db.verify_audit(c)
+    recon = db.reconcile(c)
     sla = int(db.get_setting(c, "appeal_response_sla_days") or 14)
     overdue = sum(1 for a in c.execute("SELECT submitted_at FROM appeals WHERE status='OPEN'")
                   if a["submitted_at"] and (datetime.utcnow().date() - datetime.fromisoformat(a["submitted_at"].replace("Z","")).date()).days > sla)
     c.close()
     return render_template("dashboard.html", counts=counts, top=top, feeds=fh, stats=stats,
-                           audit_ok=audit_ok, audit_bad=audit_bad, audit_n=audit_n, overdue=overdue)
+                           audit_ok=audit_ok, audit_bad=audit_bad, audit_n=audit_n, overdue=overdue, recon=recon)
 
 @app.route("/ingest", methods=["GET"])
 def ingest_page():
@@ -389,11 +390,16 @@ def hold(cid):
     if ver["total"] and ver["done"] < ver["total"]:
         c.close()
         return redirect(url_for("case_detail", cid=cid, err="All verification steps must be completed before a hold."))
+    present = {r["signal"] for r in c.execute("SELECT signal FROM signals WHERE case_id=? AND present=1", (cid,))}
+    cites = [s for s in request.form.getlist("cites") if s in present and not s.endswith("_cap") and s != "audit_sample"]
+    if not cites:
+        c.close()
+        return redirect(url_for("case_detail", cid=cid, err="Cite at least one evidence signal from this case that supports the hold."))
     me = session.get("officer_name", "officer")
     now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     snap = _case_snapshot(c, cid)
-    c.execute("INSERT INTO hold_requests(case_id,requester,reasons,requested_at,snapshot_hash) VALUES(?,?,?,?,?)",
-              (cid, me, reasons, now, snap))
+    c.execute("INSERT INTO hold_requests(case_id,requester,reasons,requested_at,snapshot_hash,cites) VALUES(?,?,?,?,?,?)",
+              (cid, me, reasons, now, snap, ",".join(cites)))
     c.execute("UPDATE cases SET state='HOLD_PENDING' WHERE id=?", (cid,))
     db.log(c, me, "hold_request", f"case={cid}")
     c.commit()

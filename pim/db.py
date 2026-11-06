@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS officers (
 CREATE TABLE IF NOT EXISTS hold_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   case_id INTEGER, requester TEXT, reasons TEXT, requested_at TEXT,
-  state TEXT DEFAULT 'PENDING', snapshot_hash TEXT
+  state TEXT DEFAULT 'PENDING', snapshot_hash TEXT, cites TEXT
 );
 
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit
@@ -273,23 +273,57 @@ def _anchor_path():
     import os
     return os.environ.get("PIM_DB", "pim.sqlite3") + ".anchor"
 
-def anchor_write(entry_id, entry_hash):
-    """Dual-write every audit hash to a separate anchor file, fsynced. An
-    attacker rewriting only the database is caught by anchor mismatch. An
-    attacker rewriting both files defeats it; that limit is documented."""
-    with open(_anchor_path(), "a") as f:
-        f.write(f"{entry_id} {entry_hash}\n")
-        f.flush()
-        import os as _os
-        _os.fsync(f.fileno())
+def _checkpoint_path():
+    """Second anchor copy in a different directory (PIM_CHECKPOINT_DIR, default
+    ~/.pim-checkpoints). Restoring an older database+anchor pair from the data
+    directory does not touch it, so the rollback is caught. Point it at a
+    separately permissioned location for more protection."""
+    import os, hashlib
+    d = os.environ.get("PIM_CHECKPOINT_DIR") or os.path.join(os.path.expanduser("~"), ".pim-checkpoints")
+    os.makedirs(d, exist_ok=True)
+    tag = hashlib.sha256(os.path.abspath(os.environ.get("PIM_DB", "pim.sqlite3")).encode()).hexdigest()[:16]
+    return os.path.join(d, tag + ".checkpoint")
 
-def anchor_head():
+def _append_fsync(path, line):
+    import os
+    with open(path, "a") as f:
+        f.write(line)
+        f.flush()
+        os.fsync(f.fileno())
+
+def anchor_write(entry_id, entry_hash):
+    """Write every audit hash, fsynced, to two files in two directories BEFORE
+    the database commit. Rewriting only the database, or rolling back the
+    database and the local anchor together, is caught. An attacker who
+    rewrites every copy defeats it; that limit is documented."""
+    line = f"{entry_id} {entry_hash}\n"
+    _append_fsync(_anchor_path(), line)
+    _append_fsync(_checkpoint_path(), line)
+
+def _head(path):
     try:
-        with open(_anchor_path()) as f:
+        with open(path) as f:
             lines = [ln.split() for ln in f if ln.strip()]
         return (int(lines[-1][0]), lines[-1][1]) if lines else None
     except FileNotFoundError:
         return None
+
+def anchor_head():
+    return _head(_anchor_path())
+
+def checkpoint_head():
+    return _head(_checkpoint_path())
+
+def reconcile(conn):
+    """Completeness check: every held case must have a hold_approved audit entry
+    and every approved hold request a matching entry. Returns problem strings."""
+    problems = []
+    for r in conn.execute("SELECT id FROM cases WHERE state IN ('HELD','RELEASED') AND held_at IS NOT NULL"):
+        n = conn.execute("SELECT COUNT(*) n FROM audit WHERE action='hold_approved' AND detail LIKE ?",
+                         (f"case={r['id']} %",)).fetchone()["n"]
+        if n == 0:
+            problems.append(f"case {r['id']} was held with no hold_approved audit entry")
+    return problems
 
 def verify_audit(conn):
     """Replay the hash chain. Returns (ok, first_bad_id_or_none, entries)."""
@@ -306,17 +340,22 @@ def verify_audit(conn):
         if hashlib.sha256(body.encode()).hexdigest() != r["hash"]:
             return False, r["id"], len(rows)
         prev = r["hash"]
-    anchor = anchor_head()
-    if anchor is not None:
-        last = rows[-1] if rows else None
-        if not last or last["hash"] is None or last["hash"] != anchor[1]:
-            # The anchor is written before the database commit. A crash between
-            # the two leaves the anchor exactly one entry ahead of an intact
-            # chain. That is reported as INCOMPLETE (possible crash residue,
-            # needs manual review), never silently reconciled; any other
-            # divergence is a rewrite and reported as a break.
-            if (last and last["hash"] is not None
-                    and anchor[0] == last["id"] + 1):
-                return None, anchor[0], len(rows)  # tri-state: None = incomplete
-            return False, anchor[0], len(rows)
+    last = rows[-1] if rows else None
+    incomplete = None
+    for head in (anchor_head(), checkpoint_head()):
+        if head is None:
+            continue
+        if last and last["hash"] is not None and last["hash"] == head[1]:
+            continue
+        # Anchors are written before the database commit. A crash between the
+        # two leaves an anchor exactly one entry ahead of an intact chain:
+        # INCOMPLETE (manual review), never silently reconciled. Any other
+        # divergence, including a database older than a checkpoint (rollback),
+        # is a break.
+        if last and last["hash"] is not None and head[0] == last["id"] + 1:
+            incomplete = head[0]
+            continue
+        return False, head[0], len(rows)
+    if incomplete is not None:
+        return None, incomplete, len(rows)
     return True, None, len(rows)
