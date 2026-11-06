@@ -108,3 +108,10 @@ Built after the third hostile review:
 - Tests added for all of the above, plus self-approval, stale-evidence approval, tamper, anchor-mismatch and session-revocation paths.
 
 Known walls (need real infrastructure, stated plainly): verified human identity behind accounts, independent off-host log anchoring, hardware-backed credentials, and any scorer improvement past the measured signal ceiling.
+
+## Addendum 2026-11-06: round-4 fixes
+
+- Per-account login throttle (8 failures / 15 min) added alongside the per-IP throttle.
+- Dashboard shows the count of appeals open past the response SLA.
+- "Unbiased outcome stream" wording replaced with "randomly selected unflagged audit cohort"; estimates depend on adjudication, unresolved samples and sample size.
+- Open, documented: rolling back database and anchor file together to an older consistent copy is undetected; crash recovery is reported (INCOMPLETE) but not chaos-tested at every write boundary; reason-quality checks are text similarity only.

@@ -77,7 +77,7 @@ def login():
     if request.method == "POST":
         ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?").split(",")[0].strip()
         username = (request.form.get("username") or "").strip()[:40]
-        if _throttled(ip, 5, 900):
+        if _throttled(ip, 5, 900) or _throttled("acct:" + username.lower(), 8, 900):
             err = "Too many attempts. Try again in 15 minutes."
         else:
             c = conn()
@@ -101,6 +101,7 @@ def login():
                     nxt = ""
                 return redirect(nxt or url_for("dashboard"))
             _record_fail(ip)
+            _record_fail("acct:" + username.lower())
             err = "Wrong username or password."
     return render_template("login.html", err=err)
 
@@ -205,9 +206,12 @@ def dashboard():
     fh = health.feed_health(c)
     stats = feedback.stats(c)
     audit_ok, audit_bad, audit_n = db.verify_audit(c)
+    sla = int(db.get_setting(c, "appeal_response_sla_days") or 14)
+    overdue = sum(1 for a in c.execute("SELECT submitted_at FROM appeals WHERE status='OPEN'")
+                  if a["submitted_at"] and (datetime.utcnow().date() - datetime.fromisoformat(a["submitted_at"].replace("Z","")).date()).days > sla)
     c.close()
     return render_template("dashboard.html", counts=counts, top=top, feeds=fh, stats=stats,
-                           audit_ok=audit_ok, audit_bad=audit_bad, audit_n=audit_n)
+                           audit_ok=audit_ok, audit_bad=audit_bad, audit_n=audit_n, overdue=overdue)
 
 @app.route("/ingest", methods=["GET"])
 def ingest_page():
