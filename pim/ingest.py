@@ -105,7 +105,7 @@ def ingest_csv(conn, feed_id, text, source="LIVE"):
 
 def ingest_csv_stream(conn, feed_id, fileobj, source="LIVE"):
     """Stream a feed CSV from any text file object in constant memory:
-    batched executemany inserts, one commit per batch. Millions of rows do
+    batched executemany inserts in the caller-owned transaction. Millions of rows do
     not materialise in memory."""
     if feed_id not in FEED_SCHEMAS:
         raise ValueError("unknown feed: " + feed_id)
@@ -149,7 +149,6 @@ def ingest_csv_stream(conn, feed_id, fileobj, source="LIVE"):
         batch.append(vals + [source])
         if len(batch) >= BATCH:
             conn.executemany(sql, batch)
-            conn.commit()
             loaded += len(batch)
             batch = []
     if batch:

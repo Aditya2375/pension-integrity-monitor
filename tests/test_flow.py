@@ -3,6 +3,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 os.environ["PIM_DB"] = tempfile.mktemp(suffix=".sqlite3")
 os.environ.setdefault("PIM_OFFICER_KEY", "officer")
 os.environ.setdefault("PIM_INSECURE_HTTP", "1")
+os.environ["PIM_CHECKPOINT_DIR"] = tempfile.mkdtemp()
 
 import app as app_module
 from pim import db, health
@@ -10,12 +11,14 @@ from pim import db, health
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
 def client():
+    from tests.http_client import FormClient
+    app_module.app.test_client_class = FormClient
     app_module.app.config["TESTING"] = True
     return app_module.app.test_client()
 
-def login(c):
+def login(c, username="admin"):
     app_module._ATTEMPTS.clear()
-    return c.post("/login", data={"key": "officer"}, follow_redirects=True)
+    return c.post("/login", data={"username": username, "key": "officer"}, follow_redirects=True)
 
 def test_end_to_end():
     c = client()
@@ -39,6 +42,9 @@ def test_end_to_end():
     assert fh["death_registry"]["rows_loaded"] == 1
     conn.close()
 
+    conn = db.connect()
+    conn.execute("UPDATE settings SET value='0' WHERE key='audit_sample_rate'")
+    conn.commit(); conn.close()
     r = c.post("/pipeline/run", follow_redirects=True)
     assert b"Pipeline complete" in r.data
 
@@ -61,8 +67,8 @@ def test_end_to_end():
     conn.close()
 
     cid = top["id"]
-    # hold blocked before verification completes
-    r = c.post(f"/case/{cid}/hold", data={"reasons": "matched registry entry"}, follow_redirects=True)
+    # hold blocked before verification completes (reason long enough to reach the verification check)
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "matched registry entry, verified against the district registrar record"}, follow_redirects=True)
     assert b"All verification steps" in r.data
 
     for s in steps:
@@ -72,7 +78,49 @@ def test_end_to_end():
     r = c.post(f"/case/{cid}/hold", data={"reasons": ""}, follow_redirects=True)
     assert b"Written reasons are required" in r.data
 
-    r = c.post(f"/case/{cid}/hold", data={"reasons": "Registry match verified on all four steps."}, follow_redirects=True)
+    # boilerplate/short reasons rejected
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "too short"}, follow_redirects=True)
+    assert b"at least 40 characters" in r.data
+
+    # a hold must cite evidence present on the case
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "Registry match verified on all four steps against district records."}, follow_redirects=True)
+    assert b"Cite at least one evidence signal" in r.data
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "Registry match verified on all four steps against district records.", "cites": ["not_a_signal"]}, follow_redirects=True)
+    assert b"Cite at least one evidence signal" in r.data
+    # hold request only pends; no tracking ID yet
+    r = c.post(f"/case/{cid}/hold", data={"reasons": "Registry match verified on all four steps against district records.", "cites": ["death_registry_match"]}, follow_redirects=True)
+    assert b"second officer must approve" in r.data
+    conn = db.connect()
+    case = conn.execute("SELECT * FROM cases WHERE id=?", (cid,)).fetchone()
+    assert case["state"] == "HOLD_PENDING"
+    conn.close()
+
+    # step-up re-auth is required before any approval check runs
+    r = c.post(f"/case/{cid}/approve-hold", follow_redirects=True)
+    assert b"Re-enter your password" in r.data
+    # the requesting officer cannot approve their own hold
+    r = c.post(f"/case/{cid}/approve-hold", data={"password": "officer"}, follow_redirects=True)
+    assert b"cannot approve it" in r.data
+
+    # duplicate (boilerplate) reasons on the other case are rejected
+    cases2 = db.connect().execute("SELECT id FROM cases WHERE pensioner_id='T002'").fetchone()
+    for s in db.connect().execute("SELECT * FROM verifications WHERE case_id=?", (cases2["id"],)).fetchall():
+        c.post(f"/case/{cases2['id']}/verify", data={"vid": s["id"], "done": "1", "note": "checked"})
+    r = c.post(f"/case/{cases2['id']}/hold", data={"reasons": "Registry match verified on all four steps against district records."}, follow_redirects=True)
+    assert b"boilerplate" in r.data
+
+    # a second, different officer approves - a real account, not a typed name
+    r = c.post("/officers/add", data={"username": "bverma", "password": "second-officer-pass", "admin_password": "officer"}, follow_redirects=True)
+    assert b"bverma" in r.data
+    c.post("/logout")
+    login2 = c.post("/login", data={"username": "bverma", "key": "second-officer-pass"}, follow_redirects=True)
+    assert b"Change your password" in login2.data  # forced at first sign-in
+    r = c.post("/change-password", data={"old": "second-officer-pass", "new": "bverma-new-pass-1"}, follow_redirects=True)
+    assert b"Password changed" in r.data
+    # step-up: approval without re-entering the password is refused
+    r = c.post(f"/case/{cid}/approve-hold", follow_redirects=True)
+    assert b"Re-enter your password" in r.data
+    r = c.post(f"/case/{cid}/approve-hold", data={"password": "bverma-new-pass-1"}, follow_redirects=True)
     assert b"Family appeal tracking ID" in r.data
 
     conn = db.connect()
@@ -111,7 +159,7 @@ def test_end_to_end():
     r = c.post(f"/case/{cid}/outcome", data={"outcome": "confirmed_alive", "note": "appeal verified"}, follow_redirects=True)
     assert r.status_code == 200
     r = c.post("/feedback/recalibrate", follow_redirects=True)
-    assert b"need at least 5 resolved cases" in r.data
+    assert b"need at least 30 resolved cases" in r.data
 
     # feed health page renders
     r = c.get("/health")

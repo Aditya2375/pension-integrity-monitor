@@ -9,6 +9,7 @@
   {% if err %}<div class="err">{{ err }}</div>{% endif %}
   <p class="muted">If a pension has been held, the hold notice carries a tracking ID. Enter it to see the case status and the appeal deadline, and to submit an appeal. No sign-in is needed.</p>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Tracking ID</label>
     <input type="text" name="tracking_id" value="{{ request.form.get('tracking_id', '') }}" required>
     {% if found %}

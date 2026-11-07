@@ -50,3 +50,97 @@ Android items 29-39: not applicable; this project has no APK, relay, or update c
 Python tool items 40-45: 40 credentials from env only (PIM_OFFICER_KEY, PIM_SECRET, PIM_DB); gitleaks clean. 41 the monitor logs in to nothing external; it only receives uploads. 42 logs: the audit table records actions, no personal payloads; uploaded CSVs are not logged; grep for personal data in repo and logs clean. 43 parsing: csv module only, no yaml/pickle, no outbound HTTP. 44 no GitHub Actions in this repo. 45 no alert channels.
 
 Bandit triage detail: B104 binding (fixed: localhost default, env override); B101 in pim/feedback.py (fixed: real ValueError); B101 in tests (fine); B306 mktemp in tests only (fine); B608 x3 (reviewed: parameter placeholders and internal constants only).
+
+## Addendum 2026-11-05: officer-gaming and integrity safeguards
+
+- Audit log is now hash-chained (each entry commits to the previous entry's SHA-256). The dashboard replays the chain on every load and shows TAMPER DETECTED with the first broken entry if history is edited or deleted. Limit: it detects, not prevents, tampering by someone with database write access; shipping the log to an external store is the stronger control and is not built.
+- Holds are dual-control: the requesting officer's hold only pends the case; approval requires a different officer name signed in. Officer name is self-declared at sign-in (single shared officer key); this is process dual control, not strong per-officer identity. Real per-officer accounts are the known follow-up.
+- Hold reasons must be at least 40 characters and are rejected if identical to reasons on any other case or pending request (boilerplate guard).
+- Queue-flooding circuit breaker: one run creating more than `max_new_cases_per_run` new cases halts further case creation, logs a loud `circuit_breaker` audit entry, and surfaces a warning. Nothing is ever auto-held.
+- Randomized audit sampling (`audit_sample_rate`) puts a small random share of unflagged still-paid pensioners into the queue as labelled audit-sample cases; their outcomes are the unbiased stream that estimates what flags miss.
+- Appeals open past `appeal_response_sla_days` are marked overdue on the appeals page.
+- Test suite extended: tamper detection, breaker, audit sampling, overdue marker, dual control, boilerplate rejection (tests/test_safeguards.py, tests/test_flow.py). All tests pass.
+
+## Addendum 2026-11-05 (2): hostile-review round 2 fixes
+
+Two external hostile reviews of the first safeguards round found the same core weaknesses. What was fixed in code, and what stays a documented limit:
+
+Fixed in code:
+- Audit log UPDATE/DELETE is now blocked by database triggers, not just detected after the fact. If the triggers are dropped and history rewritten, the hash chain still detects it (tested both ways).
+- Hold approval now binds to a hash of the exact evidence snapshot (signals, verification state, score) the requesting officer saw; any change voids the request before approval.
+- Boilerplate guard now catches near-duplicates (similarity >= 0.85), not only exact copies.
+- A cumulative drip-flood watch warns when recent pipeline runs together exceed 3x the per-run cap, covering flooding that stays under the cap each run.
+
+Still documented limits, honestly stated:
+- Officer identity is self-declared at sign-in behind a single shared officer key. Dual control is process dual control; one motivated person can sign in twice under two names. Real per-officer accounts are the follow-up and are not built.
+- The hash chain detects only tampering that does not recompute the whole chain. An attacker with full database write access who rewrites and re-chains the log defeats it; external hash shipping is the stronger control and is not built.
+- Audit sampling at 0.1% has low statistical power on small rolls; the estimate of missed deaths is only meaningful as volume grows.
+- The boilerplate guard checks text similarity, not whether the reasons are supported by the evidence.
+
+## Addendum 2026-11-05 (3): per-officer identity and log anchoring
+
+Built, responding to both hostile reviews naming these as the core walls:
+- Real per-officer accounts: officers table with scrypt (n=2^14, r=8, p=1) salted password hashes; constant-time comparison; sign-in is username+password, no shared key at sign-in. First account ('admin') bootstraps from PIM_OFFICER_KEY only when the officers table is empty; with no key, no account exists and officer pages stay closed. Officers page adds (12+ char passwords) and deactivates accounts; self-deactivation is blocked; every add/deactivate/login is audited. Dual control now compares accounts, defeating the sign-in-twice-under-two-names attack.
+- External log anchoring, free/local: every audit entry hash is dual-written with fsync to a separate anchor file (DB path + '.anchor'). Verification compares the database chain head to the anchor head; a database-only rewrite - even one that drops the triggers and recomputes the chain - is caught (tested). Documented limit: an attacker who rewrites both files defeats it; true external anchoring needs a second system, which is infrastructure, not code.
+- Throttle unchanged (5 failures / 15 min per IP); passwords are never logged; audit rows record usernames, not credentials.
+
+Scorer wall, stated straight: three further candidates (V16 multiregime risk-weighted, V17 consult-feature model, V18 gated-secondary retrain) were each frozen and tested under the freeze-then-score protocol and each failed to beat V15 at its precision. The measured miss mass is fresh unregistered deaths with no signal in any feed; the oracle catch-all tops at 92% recall at 6% precision. No remaining scorer lever exists that does not amount to inventing new synthetic signals, which would be overfitting the benchmark, not improving detection. V15 (99.13% precision / 88.81% recall, blind-verified) stays the frozen final.
+
+## Threat model (2026-11-05, after three hostile review rounds)
+
+What the system provides, in defensible words:
+- Account-level attribution of every action, not verified human identity.
+- Two-account approval for holds, not proven two-person approval. One person with two accounts defeats it; organizational process must keep accounts one-per-person.
+- Local tamper evidence for the audit log (hash chain + append-only triggers + fsynced anchor file), not independent audit anchoring. Database-only rewrites are caught; rewriting both files defeats it.
+- Detection of certain recorded-event modifications, not proof the log is complete: a code path that skips logging leaves no trace.
+- Randomly sampled audit stream, whose estimates depend on adjudication quality and sample size.
+- Benchmark performance on one specified synthetic benchmark (99.13% precision / 88.81% recall), not demonstrated deployment performance.
+- Suspicion identification for human review, not autonomous fraud determination.
+
+## Addendum 2026-11-05 (4): round-3 fixes
+
+Built after the third hostile review:
+- Session revocation: deactivation or password change bumps a per-account session_version; live sessions die on their next request (tested).
+- Step-up re-authentication: hold approval and officer add/deactivate require re-entering the acting officer's password (tested).
+- Forced password change at first sign-in for accounts created by another officer (tested).
+- Crash-consistent anchor protocol: the anchor write happens before the database commit; verification reports an anchor exactly one entry ahead of an intact chain as INCOMPLETE (possible crash residue, manual review) and never silently reconciles; any other divergence is a break.
+- Feed provenance: every upload's SHA-256 content hash, officer, row counts and time are written to the audit log as the file streams in.
+- Tests added for all of the above, plus self-approval, stale-evidence approval, tamper, anchor-mismatch and session-revocation paths.
+
+Known walls (need real infrastructure, stated plainly): verified human identity behind accounts, independent off-host log anchoring, hardware-backed credentials, and any scorer improvement past the measured signal ceiling.
+
+## Addendum 2026-11-06: round-4 fixes
+
+- Per-account login throttle (8 failures / 15 min) added alongside the per-IP throttle.
+- Dashboard shows the count of appeals open past the response SLA.
+- "Unbiased outcome stream" wording replaced with "randomly selected unflagged audit cohort"; estimates depend on adjudication, unresolved samples and sample size.
+- Open, documented: rolling back database and anchor file together to an older consistent copy is undetected; crash recovery is reported (INCOMPLETE) but not chaos-tested at every write boundary; reason-quality checks are text similarity only.
+
+## Addendum 2026-11-06 (2): round-4 local items built
+
+- Rollback detection on one host: every audit hash is also written, fsynced, to a checkpoint file in a different directory (PIM_CHECKPOINT_DIR, default ~/.pim-checkpoints). Restoring an older database plus the local anchor is caught because the checkpoint is ahead (tested). Limit: someone who rewrites all three copies, or who can write the checkpoint directory, defeats it. Pointing it at a separately permissioned location raises the bar; true protection needs another system.
+- Crash chaos test: the append is killed at each write boundary (before the first anchor, between anchor and checkpoint, after both anchors but before commit). No state is silently trusted: each shows as intact (nothing durable) or INCOMPLETE for manual review (tested).
+- Hold requests must cite at least one evidence signal actually present on the case; the cited signals are stored and shown to the approving officer. This ties reasons to case evidence but does not prove they are correct.
+- Completeness reconciliation: the dashboard flags any held case with no matching hold_approved audit entry.
+
+## Current audit, 2026-11-06: corrections and verified changes
+
+Earlier addenda are a change history, not proof of current completeness. In particular, earlier "all tests pass" reports ran some test files as scripts without collecting their test functions. The current suite is collected by pytest: 62 tests and four subprocess-crash subtests passed together. This is evidence for those cases, not a security certificate.
+
+Changes verified this pass:
+- CSRF validation on every POST, with tokens in every POST form; missing/wrong tokens fail closed.
+- Admin/reviewer separation: reviewer accounts cannot add/deactivate accounts or change scoring settings.
+- Idempotent migrations add missing columns to older databases.
+- Serialized hold requests/approvals, allowed-state checks, repeated hold rejection, pending cases included in rescoring, and snapshot invalidation on feed/profile changes.
+- Per-run breaker uses its own variable, avoiding collision with probability caps; audit-sample cases count toward capacity too.
+- No internal pre-audit commits in pipeline, feedback recalibration or ingestion batches. Callers own transaction commit.
+- Append refuses inconsistent audit history; missing anchors and legacy unhashed records are not silently declared intact. Real subprocess exits test four persistence boundaries.
+- Tracking tokens use 160 random bits; public lookup discloses minimal status; one open appeal per case; deadline applies regardless of prior appeal status.
+- Queue cases waiting 14 days move ahead of fresh cases; oldest first within that group.
+- Audit cohort selection has a durable table with inclusion probability and selected time; unresolved counts remain visible after rescoring. No population estimate is reported.
+- Upload digests cover original bytes, not re-encoded text. Hash integrity does not authenticate the source.
+- Local releases calculate arrears but do not send payments; recording an outcome no longer silently changes pension payment status.
+
+Both external reviewers still identified possible improvements. Some were already present (session-version checks, snapshot comparisons), some were implemented above, and some were rejected: requiring distinct IP ranges would exclude genuine shared-office reviewers without proving distinct people; delaying release behind a payment confirmation would risk prolonging an erroneous hold. Neither reviewer certified perfection. A description-only review does not substitute for source review.
+
+Remaining limits: privileged host control defeats co-located checkpoints; enrollment cannot prove distinct humans; throttles remain process-local; feed authenticity needs an authenticated upstream; no production accuracy or latency is demonstrated. More testing and engineering can still improve this prototype. We do not claim that the locally actionable list is exhausted.

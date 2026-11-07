@@ -5,7 +5,7 @@ Live: https://pension-integrity-monitor.onrender.com (free tier; sleeps when idl
 
 Ranks pensioners for human review when public-record signals suggest a death may have gone unreported, and manages the full officer review, family appeal and outcome-feedback loop around that ranking.
 
-The system never stops a pension by itself. Flags only order a review queue. A pension is held only by an officer, only after every verification step is complete, and only with written reasons. Families get a tracking ID, a deadline and a public appeal portal. A release pays full arrears for every day held.
+The system never stops a pension by itself. Flags only order a review queue. A pension is held only after every verification step is complete, written case-specific reasons are recorded, and a second officer approves the hold (dual control). Families get a tracking ID, a deadline and a public appeal portal. A release calculates full arrears for every day held. Every action lands in a tamper-evident hash-chained audit log.
 
 ## What it does
 
@@ -15,10 +15,14 @@ The system never stops a pension by itself. Flags only order a review queue. A p
 - **Cost-based priority threshold**: p* = C(false hold) / (C(false hold) + C(missed death)). It ranks the queue; it triggers no action.
 - **Officer review queue** ordered by calibrated probability, with the full signal breakdown and the matched registry entry on each case.
 - **Verification steps** (registrar cross-check, field visit, family contact, bank confirmation) that must all complete before a hold is possible.
-- **Hold with mandatory written reasons**, a family tracking ID and an appeal deadline.
-- **Family appeal portal** (public, no sign-in): look up a tracking ID, see case status and deadline, submit an appeal. Officers resolve appeals from the appeals page.
-- **Release with full arrears**, computed from days held and monthly pension.
-- **Outcome feedback**: verified outcomes (confirmed deceased / confirmed alive) recalibrate the signal likelihood ratios and the base rate with Laplace smoothing, once at least 5 cases are resolved.
+- **Per-officer accounts**: real local officer accounts with scrypt-hashed, salted passwords (no shared key at sign-in). The first account bootstraps from the deployment key; officers are added and deactivated from the Officers page, every change audited. Dual control compares accounts, so one person cannot approve their own hold under a typed name. Sensitive actions (hold approval, officer add/deactivate) require re-entering the account password; accounts created by another officer must change password at first sign-in; deactivation or a password change kills live sessions. Honest scope: this is account-level attribution, not verified human identity - one person holding two accounts still defeats dual control, and that limit is documented, not hidden.
+- **Dual-control holds**: a hold request only marks the case pending; a *different* officer must approve it before anything is held. Approval binds to the evidence snapshot the requester saw: if signals, verification state or the score change before approval, the request is voided and must be re-requested against current evidence. Written reasons are mandatory (minimum length, and reused or near-identical boilerplate from another case is rejected), a family tracking ID and appeal deadline are issued on approval.
+- **Tamper-evident audit log**: every officer and pipeline action is appended to a hash-chained log, and database triggers block UPDATE and DELETE on the log outright. Every entry hash is also dual-written to a separate fsynced anchor file next to the database, so an attacker who rewrites only the database - even recomputing the whole chain - is caught by the anchor mismatch. The anchor write happens before the database commit, so a crash between the two shows as INCOMPLETE for manual review rather than breaking or silently passing. The dashboard replays the chain on every load; any edit or deletion of past entries shows as TAMPER DETECTED. A second copy of each hash goes to a checkpoint file in a different directory, so restoring an older database plus local anchor is also caught. Honest scope: this is local tamper evidence; the database and anchor file share one trust boundary, and an attacker who rewrites both defeats it.
+- **Queue-flooding circuit breaker and drip watch**: if one pipeline run would create more new cases than a configured cap (`max_new_cases_per_run`, default 500), case creation stops, a loud audit entry and queue warning say to investigate feed integrity, and nothing is held automatically. A cumulative watch also warns when recent runs together exceed 3x the cap, catching flooding that drips in under the per-run cap.
+- **Randomized audit sampling**: a small configurable share (`audit_sample_rate`, default 0.1%) of still-paid, unflagged pensioners enters the queue labelled "audit sample" each run. They are a randomly selected unflagged cohort for measuring outcomes the flags never see; estimates from it still depend on adjudication quality, unresolved samples and sample size.
+- **Family appeal portal** (public, no sign-in): look up a tracking ID, see case status and deadline, submit an appeal. Officers resolve appeals from the appeals page; appeals open longer than the response SLA (`appeal_response_sla_days`, default 14) are marked overdue.
+- **Release with calculated arrears**, computed from days held and monthly pension.
+- **Outcome feedback**, guarded against feedback-loop bias: verified outcomes recalibrate the signal likelihood ratios with Laplace smoothing only after at least 30 resolved cases with 5+ of each outcome. The configured base rate is never updated from resolved cases (they are a selected sample), and unresolved cases never count as negative.
 - **Feed-health monitoring**: each feed is marked ok, stale or never loaded against its expected cadence.
 
 ## Feed schemas
@@ -82,8 +86,14 @@ Person-level pension, death-registry, electoral and bank data is personal data a
 
 ## Accuracy and privacy
 
-No accuracy figure is claimed anywhere in this system: no production data has been scored, and every probability shown is a model output for human review, not a measurement. The design treats the family appeal as a technical requirement, not an afterthought: every hold carries written reasons, a tracking ID, a deadline and a public appeal route, and every release pays full arrears.
+No production accuracy figure is claimed anywhere in this system: no production data has been scored, and every probability shown is a model output for human review, not a measurement. Development candidates were benchmarked on privately generated synthetic fixtures under a freeze-then-score protocol; the frozen final candidate (V15, 99.13% precision / 88.81% recall on its single blind synthetic benchmark) and every rejected candidate's numbers are recorded in docs/detection-evidence-limits.md. These are synthetic-benchmark measurements, not production accuracy. The design treats the family appeal as a technical requirement, not an afterthought: every hold carries written reasons, a tracking ID, a deadline and a public appeal route, and every release calculates full arrears.
 
 ## Author
 
 Aditya Kulkarni
+
+## Current implementation limits (2026-11-06)
+
+The current Flask app uses manual pipeline execution, not automatic ingestion-triggered rescoring. The frozen detector benchmark is separate from the app's configurable likelihood-ratio scorer. Neither app queue scores nor its manual workflow inherit the V15 benchmark automatically. No actual payments are sent: release records a local state change and calculates arrears.
+
+The latest tests run through pytest (not merely executing test files): `PYTHONPATH=. python -m pytest -q`. State is isolated per test module. Local checkpoint files detect a database/anchor rollback only when another checkpoint remains intact. If every local copy is controlled or rolled back together, independent verification is not possible.

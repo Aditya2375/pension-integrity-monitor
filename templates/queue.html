@@ -2,7 +2,10 @@
 {% block body %}
 <div class="card">
   <h2>Officer review queue</h2>
-  <p class="muted">Ranked by calibrated probability. Priority line: p* = {{ '%.2f'|format(p_star) }} from the configured costs. This queue never holds a pension; officers do, after verification, with written reasons.</p>
+  <p class="muted">Cases waiting 14 days or longer come first, oldest first; newer cases are ranked by score. Scores are model outputs, not validated probabilities. Priority line: p* = {{ '%.2f'|format(p_star) }} from the configured costs. This queue never holds a pension; officers do, after verification, with written reasons.</p>
+  <p class="muted"><b>Tier 1: 99.13% precision, 88.81% recall</b> (one frozen blind synthetic benchmark only, not operational accuracy). Of 1,000 tier-1 reviews about 991 confirm a death. Cases above p* carry the priority pill: this benchmark does not establish real-world performance.</p>
+  <p class="muted"><b>Speed.</b> This Flask review prototype runs scoring when an officer selects Run pipeline. The separate detector research supports ingestion-triggered scoring, but this page does not promise automatic rescoring or a measured minutes-level latency. Upstream evidence delay remains a separate limit.</p>
+  
   {% if rows %}
   <table>
     <tr><th>Case</th><th>Pensioner</th><th>Scheme</th><th>Monthly</th><th>Probability</th><th>State</th><th></th></tr>
@@ -13,7 +16,7 @@
       <td>{{ c['scheme'] }}</td>
       <td>{{ c['monthly_amount'] }}</td>
       <td class="prob">{{ '%.1f%%'|format(c['probability'] * 100) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
-      <td>{{ c['state'] }}</td>
+      <td>{{ c['state'] }}{% if c['audit'] %} <span class="pill grey">audit sample</span>{% endif %}</td>
       <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Review</a></td>
     </tr>
     {% endfor %}

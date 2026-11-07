@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <h2>Officer accounts</h2>
+  <p class="muted">Per-officer identity: every action in the audit log is tied to the signed-in account, and dual control compares accounts, not typed names. Signed in as <b>{{ me }}</b>.</p>
+  <table>
+    <tr><th>Username</th><th>Created</th><th>Status</th><th></th></tr>
+    {% for o in rows %}
+    <tr>
+      <td>{{ o['username'] }}</td>
+      <td>{{ o['created_at'] }}</td>
+      <td>{{ 'active' if o['active'] else 'deactivated' }}</td>
+      <td>{% if o['active'] and o['username'] != me %}
+      <form method="post" action="{{ url_for('officer_deactivate', oid=o['id']) }}" style="display:flex;gap:6px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="password" name="admin_password" placeholder="your password" required style="max-width:150px">
+        <button class="btn ghost">Deactivate</button>
+      </form>
+      {% else %}-{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+<div class="card">
+  <h2>Add an officer</h2>
+  <form method="post" action="{{ url_for('officer_add') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Username</label>
+    <input type="text" name="username" maxlength="40" required>
+    <label style="margin-top:12px">Password (at least 12 characters; give it to the officer in person - they must change it at first sign-in)</label>
+    <input type="password" name="password" required>
+    <label style="margin-top:12px">Re-enter your own password to authorize</label>
+    <input type="password" name="admin_password" required>
+    <p style="margin-top:14px"><button class="btn">Create officer</button></p>
+  </form>
+</div>
+{% endblock %}

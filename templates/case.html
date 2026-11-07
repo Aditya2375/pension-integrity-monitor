@@ -13,7 +13,7 @@
   Appeal deadline: <b>{{ deadline }}</b></p>
   {% endif %}
   {% if case['state'] == 'RELEASED' %}
-  <p class="muted">Released {{ case['released_at'] }} with full arrears of <b>{{ '%0.2f'|format(case['arrears']) }}</b>.</p>
+  <p class="muted">Released {{ case['released_at'] }} with calculated arrears of <b>{{ '%0.2f'|format(case['arrears']) }}</b>.</p>
   {% endif %}
 </div>
 
@@ -37,12 +37,13 @@
 </div>
 {% endif %}
 
-{% if case['state'] in ['FLAGGED','UNDER_REVIEW','VERIFICATION'] %}
+{% if case['state'] in ['FLAGGED','UNDER_REVIEW','VERIFICATION','HOLD_PENDING'] %}
 <div class="card">
   <h2>Verification steps</h2>
   <p class="muted">Every step must be completed before a hold is possible.</p>
   {% for v in ver %}
   <form method="post" action="{{ url_for('verify', cid=case['id']) }}" style="display:flex;gap:10px;align-items:center;margin:8px 0;flex-wrap:wrap">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="vid" value="{{ v['id'] }}">
     <input type="hidden" name="done" value="{{ 0 if v['done'] else 1 }}">
     <span style="flex:1;min-width:260px">{{ '✔' if v['done'] else '○' }} {{ v['step'] }}{% if v['note'] %} <span class="muted">({{ v['note'] }})</span>{% endif %}</span>
@@ -54,25 +55,57 @@
 
 <div class="card">
   <h2>Officer decision</h2>
-  <h3>Hold the pension</h3>
+  <h3>Request a hold</h3>
+  <p class="muted">Dual control: a hold only takes effect after a <b>different</b> officer approves it. Reasons must be case-specific (at least 40 characters); copied boilerplate is rejected.</p>
+  {% if case['state'] == 'HOLD_PENDING' and pending %}
+  <p class="muted">Hold already requested by <b>{{ pending['requester'] }}</b> at {{ pending['requested_at'] }}; awaiting a second officer's decision below.</p>
+  {% else %}
   <form method="post" action="{{ url_for('hold', cid=case['id']) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Evidence you are relying on (tick at least one)</label>
+    <p>{% for s in sigs %}{% if s['present'] and not s['signal'].endswith('_cap') and s['signal'] != 'audit_sample' %}<label style="display:inline-block;margin-right:14px"><input type="checkbox" name="cites" value="{{ s['signal'] }}"> {{ s['signal'].replace('_',' ') }}</label>{% endif %}{% endfor %}</p>
     <label>Written reasons (required; shared with the family on request)</label>
     <textarea name="reasons" required></textarea>
-    <p><button class="btn warn">Hold with reasons</button></p>
+    <p><button class="btn warn">Request hold</button></p>
   </form>
+  {% endif %}
   <h3>Dismiss the flag</h3>
   <form method="post" action="{{ url_for('dismiss', cid=case['id']) }}" style="display:flex;gap:10px;flex-wrap:wrap">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="text" name="note" placeholder="why the flag is wrong" style="max-width:320px">
     <button class="btn ghost">Dismiss</button>
   </form>
 </div>
 {% endif %}
 
+{% if case['state'] == 'HOLD_PENDING' and pending %}
+<div class="card">
+  <h2>Pending hold - second officer decision</h2>
+  <p class="muted">Requested by <b>{{ pending['requester'] }}</b> at {{ pending['requested_at'] }}.</p>
+  <p>Reasons given: {{ pending['reasons'] }}</p>
+  <p>Evidence cited: <b>{{ (pending['cites'] or '').replace('_',' ').replace(',', ', ') }}</b></p>
+  {% if pending['requester'] == officer_name %}
+  <p class="err">You requested this hold. Dual control requires a different officer to approve or reject it; sign in under another officer name.</p>
+  {% else %}
+  <form method="post" action="{{ url_for('approve_hold', cid=case['id']) }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="password" name="password" placeholder="re-enter your password" required style="max-width:200px">
+    <button class="btn warn">Approve hold (I am a different officer)</button>
+  </form>
+  <form method="post" action="{{ url_for('reject_hold', cid=case['id']) }}" style="display:inline;margin-left:10px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="btn ghost">Reject hold request</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if case['state'] == 'HELD' %}
 <div class="card">
   <h2>Release</h2>
-  <p class="muted">Release restores the pension and pays full arrears for every day held.</p>
-  <form method="post" action="{{ url_for('release', cid=case['id']) }}"><button class="btn">Release with full arrears</button></form>
+  <p class="muted">Release restores the pension and calculates full arrears for every day held.</p>
+  <form method="post" action="{{ url_for('release', cid=case['id']) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn">Release with calculated arrears</button></form>
 </div>
 {% endif %}
 
@@ -80,6 +113,7 @@
   <h2>Verified outcome</h2>
   <p class="muted">The verified outcome recalibrates signal weights for future cases.</p>
   <form method="post" action="{{ url_for('outcome', cid=case['id']) }}" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <select name="outcome" style="max-width:220px">
       <option value="confirmed_deceased">Confirmed deceased</option>
       <option value="confirmed_alive">Confirmed alive</option>

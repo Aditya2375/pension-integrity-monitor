@@ -4,8 +4,11 @@
   <h2>Officer sign in</h2>
   {% if err %}<div class="err">{{ err }}</div>{% endif %}
   <form method="post">
-    <label>Officer key</label>
-    <input type="password" name="key" autofocus>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Officer username</label>
+    <input type="text" name="username" maxlength="40" autofocus autocomplete="username">
+    <label style="margin-top:12px">Password</label>
+    <input type="password" name="key" autocomplete="current-password">
     <p style="margin-top:14px"><button class="btn">Sign in</button></p>
   </form>
   <p class="muted">Family members do not need to sign in. Use the <a href="{{ url_for('appeal_portal') }}">appeal portal</a> with your tracking ID.</p>
