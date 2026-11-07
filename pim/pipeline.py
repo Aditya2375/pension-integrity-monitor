@@ -269,7 +269,7 @@ def _assign(pm_rows, scan_args, id_of, aadhaar_rows=None, aadhaar_key=None, min_
 
 def run_pipeline(conn, today=None, snapshot=None, rng=None):
     import random
-    rng = rng or random.Random()
+    rng = rng or random.SystemRandom()
     snap = snapshot or today or date.today()
     base_rate = float(db.get_setting(conn, "base_rate"))
     p_star = scoring.cost_threshold(float(db.get_setting(conn, "cost_false_hold")),

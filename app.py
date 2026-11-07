@@ -26,11 +26,18 @@ def _throttled(ip, limit, window_s):
     now = time.time()
     with _LOCK:
         arr = [t for t in _ATTEMPTS.get(ip, []) if now - t < window_s]
-        _ATTEMPTS[ip] = arr
+        if arr:
+            _ATTEMPTS[ip] = arr
+        else:
+            _ATTEMPTS.pop(ip, None)
         return len(arr) >= limit
 
 def _record_fail(ip):
     with _LOCK:
+        if len(_ATTEMPTS) > 50000:  # bound memory: drop keys idle for over an hour
+            now = time.time()
+            for k in [k for k, v in _ATTEMPTS.items() if not v or now - v[-1] > 3600]:
+                _ATTEMPTS.pop(k, None)
         _ATTEMPTS.setdefault(ip, []).append(time.time())
 
 @app.before_request
@@ -553,7 +560,8 @@ def outcome(cid):
     if o not in feedback.OUTCOMES:
         abort(400)
     c = conn()
-    feedback.record_outcome(c, cid, o, request.form.get("note", ""))
+    feedback.record_outcome(c, cid, o, request.form.get("note", ""),
+                        actor=session.get("officer_name", "officer"))
     if o == "confirmed_deceased":
         case = c.execute("SELECT pensioner_id FROM cases WHERE id=?", (cid,)).fetchone()
         # An outcome is a recorded finding, not authority to stop payment.
@@ -568,7 +576,7 @@ def queue_export():
     r = officer_required()
     if r: return r
     import tempfile, os as _os
-    from scripts.export_flags import export, SIGNALS
+    from scripts.export_flags import export
     fd, path = tempfile.mkstemp(suffix=".csv")
     _os.close(fd)
     try:

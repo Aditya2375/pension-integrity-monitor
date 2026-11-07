@@ -16,14 +16,20 @@ def main():
     for fid in ingest.FEED_SCHEMAS:
         p = pathlib.Path(a.dir) / f"{fid}.csv"
         if p.exists():
-            loaded, rejected = ingest.ingest_csv(conn, fid, p.read_text())
+            with p.open("r", encoding="utf-8-sig", newline="") as fh:
+                loaded, rejected = ingest.ingest_csv_stream(conn, fid, fh)
             print(f"{fid}: loaded={loaded} rejected={rejected}")
     conn.commit()
-    made, p_star = pipeline.run_pipeline(conn)
+    made, p_star, breaker, watch = pipeline.run_pipeline(conn)
     conn.commit()
     conn.close()
     n = export(a.out)
     print(f"pipeline: {made} new cases, p*={p_star:.3f}; exported {n} ranked flags to {a.out}")
+    if breaker:
+        print("CIRCUIT BREAKER TRIPPED: case creation stopped at the configured cap. "
+              "Investigate feed integrity before rerunning.")
+    elif watch:
+        print("FLOOD WATCH: cumulative new-case volume over recent runs exceeds 3x the per-run cap.")
 
 if __name__ == "__main__":
     main()

@@ -20,7 +20,7 @@ Date: 2026-11-03. Scope: full application (Flask app, ingestion, pipeline, templ
 - All SQL is parameterized; the only string-formatted SQL uses internal schema constants, never request input.
 - Templates use Jinja autoescaping throughout; no `|safe`, no `Markup`.
 - No secrets, tokens, databases or caches tracked in git (`.gitignore` covers `pim.sqlite3`, `__pycache__`, `.pytest_cache`).
-- Appeal tracking IDs are 8 random characters from `secrets`; the appeal window is enforced server-side; a hold requires written reasons and completed verification steps.
+- Appeal tracking IDs are 160-bit tokens (40 hex characters) from `secrets`; the appeal window is enforced server-side; a hold requires written reasons and completed verification steps.
 - Dependency audit: `pip-audit -r requirements.txt` reports "No known vulnerabilities found" (2026-11-03).
 - Test suite: 2 passed after all fixes.
 

@@ -88,6 +88,10 @@ Person-level pension, death-registry, electoral and bank data is personal data a
 
 No production accuracy figure is claimed anywhere in this system: no production data has been scored, and every probability shown is a model output for human review, not a measurement. Development candidates were benchmarked on privately generated synthetic fixtures under a freeze-then-score protocol; the frozen final candidate (V15, 99.13% precision / 88.81% recall on its single blind synthetic benchmark) and every rejected candidate's numbers are recorded in docs/detection-evidence-limits.md. These are synthetic-benchmark measurements, not production accuracy. The design treats the family appeal as a technical requirement, not an afterthought: every hold carries written reasons, a tracking ID, a deadline and a public appeal route, and every release calculates full arrears.
 
+## Public benchmark
+
+The detector candidate behind this workflow was measured once, blind, on a frozen synthetic benchmark: 200,000 synthetic pensioners across 29 administrative feeds, generated after the candidate was frozen, scored exactly once at its precommitted operating point. Result: 99.13% precision, 88.81% recall (synthetic data, not production accuracy). The full evidence chain is public and hash-checkable: the mix declaration was committed before generation, the generator is published, and regeneration reproduces all 29 feeds byte-for-byte against the published manifest. See `benchmark/README.md` and `benchmark/PROVENANCE.md`; the 66 MB feed archive is the `benchmark-round17` release asset. Every candidate's numbers, including the rejected ones, are in `docs/detection-evidence-limits.md`.
+
 ## Author
 
 Aditya Kulkarni

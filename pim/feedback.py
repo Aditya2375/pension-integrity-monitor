@@ -18,11 +18,11 @@ MIN_PER_CLASS = 5
 
 OUTCOMES = ("confirmed_deceased", "confirmed_alive")
 
-def record_outcome(conn, case_id, outcome, note=""):
+def record_outcome(conn, case_id, outcome, note="", actor="officer"):
     if outcome not in OUTCOMES:
         raise ValueError(f"unknown outcome: {outcome!r}")
     conn.execute("UPDATE cases SET outcome=?, outcome_note=? WHERE id=?", (outcome, note, case_id))
-    db.log(conn, "officer", "outcome", f"case={case_id} outcome={outcome}")
+    db.log(conn, actor, "outcome", f"case={case_id} outcome={outcome}")
 
 def recalibrate(conn):
     resolved = conn.execute(
