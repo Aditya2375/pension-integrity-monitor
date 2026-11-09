@@ -55,3 +55,6 @@ form.inline { display:inline; margin:0; }
 .pill.warn { background:#fde8e0; color:var(--warn); }
 @media (max-width:640px) { header.top { padding:12px 14px; } main { padding:0 12px 40px; } table { font-size:13px; } }
 @media (prefers-reduced-motion:reduce) { * { transition:none !important; animation:none !important; } }
+
+.mt { margin-top:16px; }
+.narrowfile { max-width:320px; }

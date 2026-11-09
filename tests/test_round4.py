@@ -235,3 +235,12 @@ def test_registered_actor_missing_from_table_is_denied(fresh_db):
     with pytest.raises(WorkflowError):
         wf.propose(c, cid, "hold", a, "r")
     c.close()
+
+
+def test_templates_have_no_inline_styles_and_labelled_fields():
+    import glob, re
+    for f in glob.glob("templates/*.html"):
+        s = open(f).read()
+        assert ' style="' not in s, f"inline style (blocked by CSP) in {f}"
+        for m in re.finditer(r"<label(?![^>]*\bfor=)[^>]*>(.*?)</label>", s, re.S):
+            assert "<input" in m.group(1), f"label without for in {f}: {m.group(0)[:60]}"

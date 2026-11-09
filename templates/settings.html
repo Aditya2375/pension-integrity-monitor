@@ -7,29 +7,29 @@
   <form method="post">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="grid">
-      <div><label>Base rate (annual unreported-death prevalence)</label><input type="text" name="base_rate" value="{{ s['base_rate'] }}"></div>
-      <div><label>Cost of a false hold</label><input type="text" name="cost_false_hold" value="{{ s['cost_false_hold'] }}"></div>
-      <div><label>Cost of a missed death</label><input type="text" name="cost_missed_death" value="{{ s['cost_missed_death'] }}"></div>
-      <div><label>Identity match threshold (0-1)</label><input type="text" name="match_threshold" value="{{ s['match_threshold'] }}"></div>
-      <div><label>Appeal window (days)</label><input type="text" name="appeal_window_days" value="{{ s['appeal_window_days'] }}"></div>
-      <div><label>Notice period before suspension (days)</label><input type="text" name="notice_period_days" value="{{ s['notice_period_days'] }}"></div>
-      <div><label>Bank inactivity (months)</label><input type="text" name="bank_inactivity_months" value="{{ s['bank_inactivity_months'] }}"></div>
-      <div><label>Life certificate overdue (days)</label><input type="text" name="life_cert_overdue_days" value="{{ s['life_cert_overdue_days'] }}"></div>
-      <div><label>Old-age signal (years)</label><input type="text" name="old_age_years" value="{{ s['old_age_years'] }}"></div>
+      <div><label for="s_base_rate">Base rate (annual unreported-death prevalence)</label><input type="text" id="s_base_rate" name="base_rate" value="{{ s['base_rate'] }}"></div>
+      <div><label for="s_cost_false_hold">Cost of a false hold</label><input type="text" id="s_cost_false_hold" name="cost_false_hold" value="{{ s['cost_false_hold'] }}"></div>
+      <div><label for="s_cost_missed_death">Cost of a missed death</label><input type="text" id="s_cost_missed_death" name="cost_missed_death" value="{{ s['cost_missed_death'] }}"></div>
+      <div><label for="s_match_threshold">Identity match threshold (0-1)</label><input type="text" id="s_match_threshold" name="match_threshold" value="{{ s['match_threshold'] }}"></div>
+      <div><label for="s_appeal_window_days">Appeal window (days)</label><input type="text" id="s_appeal_window_days" name="appeal_window_days" value="{{ s['appeal_window_days'] }}"></div>
+      <div><label for="s_notice_period_days">Notice period before suspension (days)</label><input type="text" id="s_notice_period_days" name="notice_period_days" value="{{ s['notice_period_days'] }}"></div>
+      <div><label for="s_bank_inactivity_months">Bank inactivity (months)</label><input type="text" id="s_bank_inactivity_months" name="bank_inactivity_months" value="{{ s['bank_inactivity_months'] }}"></div>
+      <div><label for="s_life_cert_overdue_days">Life certificate overdue (days)</label><input type="text" id="s_life_cert_overdue_days" name="life_cert_overdue_days" value="{{ s['life_cert_overdue_days'] }}"></div>
+      <div><label for="s_old_age_years">Old-age signal (years)</label><input type="text" id="s_old_age_years" name="old_age_years" value="{{ s['old_age_years'] }}"></div>
     </div>
     <h3>Signal likelihood ratios</h3>
     <table>
-      <tr><th>Signal</th><th>LR+ (present)</th><th>LR- (absent)</th><th>Last updated</th></tr>
+      <tr><th scope="col">Signal</th><th scope="col">LR+ (present)</th><th scope="col">LR- (absent)</th><th scope="col">Last updated</th></tr>
       {% for w in weights %}
       <tr>
         <td>{{ w['signal'].replace('_', ' ') }}</td>
-        <td><input type="text" name="lp_{{ w['signal'] }}" value="{{ w['lr_plus'] }}"></td>
-        <td><input type="text" name="lm_{{ w['signal'] }}" value="{{ w['lr_minus'] }}"></td>
+        <td><input type="text" aria-label="LR+ for {{ w['signal'] }}" name="lp_{{ w['signal'] }}" value="{{ w['lr_plus'] }}"></td>
+        <td><input type="text" aria-label="LR- for {{ w['signal'] }}" name="lm_{{ w['signal'] }}" value="{{ w['lr_minus'] }}"></td>
         <td class="muted">{{ w['updated_at'] or 'default' }}</td>
       </tr>
       {% endfor %}
     </table>
-    <p style="margin-top:14px"><button class="btn">Save settings</button></p>
+    <p class="mt"><button class="btn">Save settings</button></p>
   </form>
 </div>
 {% endblock %}

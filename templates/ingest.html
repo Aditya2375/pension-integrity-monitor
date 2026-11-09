@@ -11,9 +11,9 @@
   Required: <code>{{ schemas[f['feed_id']]['required']|join(', ') }}</code>
   {% if schemas[f['feed_id']]['optional'] %} &middot; Optional: <code>{{ schemas[f['feed_id']]['optional']|join(', ') }}</code>{% endif %}<br>
   Cadence: every {{ f['cadence_days'] }} days &middot; Last ingest: {{ f['last_ingest_at'] or 'never' }} &middot; Loaded {{ f['rows_loaded'] }}, rejected {{ f['rows_rejected'] }}</p>
-  <form method="post" action="{{ url_for('ingest_upload', feed_id=f['feed_id']) }}" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  <form method="post" action="{{ url_for('ingest_upload', feed_id=f['feed_id']) }}" enctype="multipart/form-data" class="row">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input type="file" name="file" accept=".csv" required style="max-width:320px">
+    <input type="file" name="file" accept=".csv" required class="narrowfile">
     <button class="btn">Upload</button>
     <a class="btn ghost" href="{{ url_for('template', feed_id=f['feed_id']) }}">Download template</a>
   </form>

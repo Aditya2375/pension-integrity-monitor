@@ -4,7 +4,7 @@
   <h2>Feed health</h2>
   <p class="muted">A feed older than its expected cadence is marked stale; scoring that depends on stale feeds should be treated with caution.</p>
   <table>
-    <tr><th>Feed</th><th>Cadence</th><th>Last ingest</th><th>Age (days)</th><th>Loaded</th><th>Rejected</th><th>State</th></tr>
+    <tr><th scope="col">Feed</th><th scope="col">Cadence</th><th scope="col">Last ingest</th><th scope="col">Age (days)</th><th scope="col">Loaded</th><th scope="col">Rejected</th><th scope="col">State</th></tr>
     {% for f in feeds %}
     <tr>
       <td>{{ f['name'] }}</td><td>{{ f['cadence_days'] }}d</td>
