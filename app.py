@@ -18,6 +18,16 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
     MAX_CONTENT_LENGTH=300 * 1024 * 1024,  # feed uploads stream; this caps disk abuse
 )
+
+
+@app.before_request
+def _cap_body():
+    """Only the admin feed upload may be large. Everything else, including the
+    public family portal, is capped before the body is read."""
+    if not request.path.startswith("/ingest"):
+        request.max_content_length = 8 * 1024 * 1024
+
+
 install_csrf(app)
 
 TRUSTED_PROXIES = tuple(x.strip() for x in os.environ.get("PIM_TRUSTED_PROXIES", "").split(",") if x.strip())
@@ -110,6 +120,29 @@ def lang():
 @app.errorhandler(403)
 def forbidden(e):
     return render_template("error.html", title="Not allowed", text="Your role cannot do this."), 403
+
+def _error_page(title, text, code):
+    return render_template("error.html", title=title, text=text), code
+
+@app.errorhandler(404)
+def not_found(e):
+    return _error_page("Page not found", "That page or case does not exist, or you cannot see it.", 404)
+
+@app.errorhandler(OverflowError)
+def too_big(e):
+    return _error_page("Page not found", "That page or case does not exist, or you cannot see it.", 404)
+
+@app.errorhandler(405)
+def bad_method(e):
+    return _error_page("Not allowed", "This address does not accept that kind of request.", 405)
+
+@app.errorhandler(413)
+def too_large(e):
+    return _error_page("Too large", "That upload is too large.", 413)
+
+@app.errorhandler(500)
+def server_error(e):
+    return _error_page("Something went wrong", "The request could not be completed. Nothing was changed. Please try again or contact your office.", 500)
 
 @app.route("/login", methods=["GET", "POST"])
 def login():

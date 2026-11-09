@@ -33,9 +33,10 @@
   {% set r = found['row'] %}
   <h3>{{ t('status_title') }}</h3>
   <ol class="tracker" aria-label="{{ t('status_title') }}">
-    <li class="{{ 'on' if True }}">1. Notice sent</li>
-    <li class="{{ 'on' if r['status'] != 'NOTICE' }}">2. Appeal received</li>
-    <li class="{{ 'on' if r['status'] in ('UPHELD','RELEASED') }}">3. Decision</li>
+    {% set cur = 3 if r['status'] in ('UPHELD','RELEASED') else (2 if r['status'] == 'OPEN' else 1) %}
+    <li class="on"{{ ' aria-current=step'|safe if cur == 1 }}>{{ t('step_notice') }}</li>
+    <li class="{{ 'on' if cur >= 2 }}"{{ ' aria-current=step'|safe if cur == 2 }}>{{ t('step_appeal') }}</li>
+    <li class="{{ 'on' if cur >= 3 }}"{{ ' aria-current=step'|safe if cur == 3 }}>{{ t('step_decision') }}</li>
   </ol>
   {% if r['status'] == 'NOTICE' %}
     {% if found['deadline'] %}<p>{{ t('window_note', date=found['deadline']) }}</p>{% endif %}
@@ -49,7 +50,7 @@
       {% if evidence_enabled %}
       <label for="ev">{{ t('evidence_label') }}</label>
       <input id="ev" type="file" name="evidence" accept=".pdf,.jpg,.jpeg,.png">
-      {% else %}<p class="muted">Documents cannot be uploaded here. Take them to your pension office.</p>{% endif %}
+      {% else %}<p class="muted">{{ t('no_upload') }}</p>{% endif %}
       <p><button class="btn">{{ t('submit_appeal') }}</button></p>
     </form>
   {% elif r['status'] == 'OPEN' %}
@@ -62,7 +63,7 @@
     {% if r['decision'] %}<p class="muted">{{ r['decision'] }}</p>{% endif %}
   {% endif %}
   <p class="muted">{{ t('survivor_note') }}</p>
-  <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="signout"><button class="linkbtn">Sign out of this case</button></form>
+  <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="signout"><button class="linkbtn">{{ t('signout_case') }}</button></form>
   {% endif %}
   <p class="muted">{{ t('help_note') }}</p>
 </div>
