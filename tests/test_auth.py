@@ -1,68 +1,78 @@
-import os, tempfile, pathlib, sys
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-os.environ["PIM_DB"] = tempfile.mkstemp(suffix=".sqlite3")[1]
-os.environ.setdefault("PIM_OFFICER_KEY", "officer")
-os.environ.setdefault("PIM_INSECURE_HTTP", "1")
-os.environ["PIM_CHECKPOINT_DIR"] = tempfile.mkdtemp()
-from app import app
-from tests.http_client import FormClient
-app.test_client_class = FormClient
+import pytest
+from conftest import Client, as_user
+import app as app_module
 
-PUBLIC_GET = {"/login", "/appeal", "/context", "/templates/pension_master.csv", "/static/style.css"}
+PUBLIC_GET = ["/login", "/appeal", "/context", "/templates/pension_master.csv", "/static/style.css"]
+PROTECTED_GET = ["/", "/queue", "/queue/export", "/case/1", "/appeals", "/feedback", "/health", "/ingest", "/settings", "/evidence/1"]
+PROTECTED_POST = ["/pipeline/run", "/ingest/pension_master", "/case/1/propose", "/case/1/decide", "/case/1/release",
+                  "/case/1/dismiss", "/case/1/verify", "/case/1/suspend", "/case/1/appeal-decision", "/case/1/note",
+                  "/feedback/recalibrate", "/settings", "/logout"]
 
-PROTECTED = [
-    ("GET", "/"), ("GET", "/queue"), ("GET", "/queue/export"),
-    ("GET", "/case/1"), ("GET", "/appeals"), ("GET", "/feedback"),
-    ("GET", "/health"), ("GET", "/ingest"), ("GET", "/settings"),
-    ("POST", "/pipeline/run"), ("POST", "/ingest/pension_master"),
-    ("POST", "/case/1/hold"), ("POST", "/case/1/release"),
-    ("POST", "/case/1/dismiss"), ("POST", "/case/1/verify"),
-    ("POST", "/case/1/outcome"), ("POST", "/appeals/1/resolve"),
-    ("POST", "/feedback/recalibrate"), ("POST", "/settings"),
-    ("GET", "/officers"), ("POST", "/officers/add"),
-    ("POST", "/officers/1/deactivate"),
-    ("POST", "/case/1/approve-hold"), ("POST", "/case/1/reject-hold"),
-]
 
-def test_logged_out_denied():
-    c = app.test_client()
-    for method, path in PROTECTED:
-        r = c.open(path, method=method)
-        assert r.status_code in (302, 400, 401, 403), f"{method} {path} -> {r.status_code}"
-        if r.status_code == 302:
-            assert "/login" in r.headers["Location"], f"{method} {path} redirects elsewhere"
+def test_logged_out_denied(fresh_db):
+    cl = Client()
+    for p in PROTECTED_GET:
+        r = cl.get(p)
+        assert r.status_code == 302 and "/login" in r.headers["Location"], p
+    for p in PROTECTED_POST:
+        r = cl.post(p, {})            # with a valid CSRF token, still no session
+        assert r.status_code in (302, 401, 403), p
 
-def test_public_pages_ok():
-    c = app.test_client()
-    for path in ["/login", "/appeal", "/context", "/templates/pension_master.csv"]:
-        r = c.get(path)
-        assert r.status_code == 200, f"{path} -> {r.status_code}"
 
-def test_no_bootstrap_without_key():
-    """With no PIM_OFFICER_KEY at first start, no officer account is created
-    and sign-in stays closed."""
-    import importlib, app as appmod
-    from pim import db
-    os.environ["PIM_DB"] = tempfile.mkstemp(suffix=".sqlite3")[1]
-    saved_db = db.DB_PATH
-    old_key = os.environ.pop("PIM_OFFICER_KEY", None)
-    importlib.reload(db)
-    importlib.reload(appmod)
-    appmod.app.test_client_class = FormClient
-    c = appmod.app.test_client()
-    r = c.post("/login", data={"username": "admin", "key": "anything"})
-    assert r.status_code == 200 and b"No officer account" in r.data
-    os.environ["PIM_DB"] = saved_db
-    if old_key is not None: os.environ["PIM_OFFICER_KEY"] = old_key
-    importlib.reload(db)
-    importlib.reload(appmod)
+def test_posts_without_csrf_rejected(fresh_db):
+    cl = as_user("rev1")
+    for p in PROTECTED_POST + ["/login", "/appeal"]:
+        r = cl.post(p, {}, token=False)
+        assert r.status_code == 400, p
+    r = cl.post("/appeal", {"action": "send_code", "tracking_id": "X"}, token=False)
+    assert r.status_code == 400
 
-def test_login_throttle():
-    import app as appmod
-    appmod.app.test_client_class = FormClient
-    c = appmod.app.test_client()
-    for _ in range(6):
-        r = c.post("/login", data={"username": "admin", "key": "wrong"})
+
+def test_public_pages_ok(fresh_db):
+    cl = Client()
+    for p in PUBLIC_GET:
+        assert cl.get(p).status_code == 200, p
+
+
+def test_wrong_key_and_unknown_user(fresh_db):
+    cl = Client()
+    assert b"Wrong username or key" in cl.post("/login", {"username": "rev1", "key": "nope"}).data
+    assert b"Wrong username or key" in cl.post("/login", {"username": "ghost", "key": "reviewer-key-1"}).data
+
+
+def test_login_throttle(fresh_db):
+    cl = Client()
+    for _ in range(12):
+        r = cl.post("/login", {"username": "rev1", "key": "wrong"})
     assert b"Too many attempts" in r.data
-    import app as appmod
-    appmod._ATTEMPTS.clear()
+
+
+def test_logout_is_post_only_and_clears_session(fresh_db):
+    cl = as_user("rev1")
+    assert cl.get("/logout").status_code == 405
+    cl.post("/logout", {})
+    assert cl.get("/queue").status_code == 302
+
+
+def test_session_and_csrf_rotate_on_login(fresh_db):
+    cl = Client()
+    before = cl.token()
+    cl.post("/login", {"username": "rev1", "key": "reviewer-key-1"})
+    after = cl.token("/queue")
+    assert before != after
+
+
+def test_role_gates(fresh_db):
+    rev, aud = as_user("rev1"), as_user("aud1")
+    assert rev.get("/settings").status_code == 403
+    assert rev.post("/pipeline/run", {}).status_code == 403
+    assert aud.post("/case/1/dismiss", {"note": "x"}).status_code == 403
+    assert aud.get("/queue").status_code == 200
+
+
+def test_untrusted_forwarded_header_does_not_change_limit_bucket(fresh_db):
+    cl = Client()
+    for i in range(12):
+        r = cl.c.post("/login", data={"username": "rev1", "key": "bad", "csrf_token": cl.token()},
+                      headers={"X-Forwarded-For": f"10.0.0.{i}"})
+    assert b"Too many attempts" in r.data

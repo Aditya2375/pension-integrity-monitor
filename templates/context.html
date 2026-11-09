@@ -5,7 +5,7 @@
   <h2>Public data context</h2>
   <p class="muted">Real, published figures from government portals, public audits and press citations, each with its source and licence note. These are aggregate public statistics. They are not pension-roll records, they are not loaded into the flagging feeds, and they say nothing about this system's accuracy, which is unmeasured.</p>
   <table>
-    <tr><th>Metric</th><th>Value</th><th>Region</th><th>Year</th><th>Source</th><th>Licence note</th></tr>
+    <tr><th scope="col">Metric</th><th scope="col">Value</th><th scope="col">Region</th><th scope="col">Year</th><th scope="col">Source</th><th scope="col">Licence note</th></tr>
     {% for r in rows %}
     <tr>
       <td>{{ r['metric'] }}</td>

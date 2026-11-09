@@ -1,0 +1,43 @@
+{
+  "scope": "security support modules, not integrated portal or full detector",
+  "base_commit": "972d2b38248a5db83b441277ee606096613933a9",
+  "python": "3.10.12",
+  "tools": {
+    "pytest": "9.2.0",
+    "bandit": "1.9.4",
+    "pip-audit": "2.10.1",
+    "pip-tools": "7.6.2"
+  },
+  "tests": {
+    "total": 18,
+    "support_control_cases": 12,
+    "existing_cases": 6,
+    "result": "pass"
+  },
+  "dependency_components": 9,
+  "known_vulnerabilities_returned": 0,
+  "bandit": {
+    "medium_findings": 3,
+    "triaged": "internal-schema/placeholder SQL in ingest/export at base; no blanket suppression"
+  },
+  "deployment_signoff": false,
+  "live_UI_verified": false,
+  "synthetic_only": true,
+  "integration_review": {
+    "commit": "d153094",
+    "existing_tests": 40,
+    "verdict": "reject pending fixes",
+    "reproduced_failures": [
+      "cross-feed token mismatch",
+      "unpolicyed sensitive source mapping",
+      "placeholder authority accepted",
+      "extra positional field dropped",
+      "bridge permissions 0644",
+      "fabricated defaults/shared missing-ID marker"
+    ]
+  },
+  "detector_review": {
+    "commit": "2945905",
+    "verdict": "trusted offline experimental only; no loader hash enforcement"
+  }
+}

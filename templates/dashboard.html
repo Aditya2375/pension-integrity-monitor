@@ -9,17 +9,17 @@
   <div class="stat"><div class="n">{{ stats.get('confirmed_alive', 0) }}</div><div class="l">Confirmed alive</div></div>
 </div>
 
-<div class="card" style="margin-top:20px">
+<div class="card mt">
   <h2>Highest-priority cases</h2>
   {% if top %}
   <table>
-    <tr><th>Case</th><th>Pensioner</th><th>Scheme</th><th>Probability</th><th>State</th><th></th></tr>
+    <tr><th scope="col">Case</th><th scope="col">Pensioner</th><th scope="col">Scheme</th><th scope="col">Review priority</th><th scope="col">State</th><th scope="col"></th></tr>
     {% for c in top %}
     <tr>
       <td>#{{ c['id'] }}</td>
       <td>{{ c['name'] }}</td>
       <td>{{ c['scheme'] }}</td>
-      <td class="prob">{{ '%.1f%%'|format(c['probability'] * 100) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
+      <td class="prob">{{ '%.2f'|format(c['probability']) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
       <td>{{ c['state'] }}</td>
       <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Open</a></td>
     </tr>
@@ -46,7 +46,7 @@
 <div class="card">
   <h2>Feed status</h2>
   <table>
-    <tr><th>Feed</th><th>Last ingest</th><th>Rows loaded</th><th>Rejected</th><th>State</th></tr>
+    <tr><th scope="col">Feed</th><th scope="col">Last ingest</th><th scope="col">Rows loaded</th><th scope="col">Rejected</th><th scope="col">State</th></tr>
     {% for f in feeds %}
     <tr>
       <td>{{ f['name'] }}</td>

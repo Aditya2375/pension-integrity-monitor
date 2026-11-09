@@ -1,11 +1,11 @@
 # Pension Integrity Monitor
 
-Live: https://pension-integrity-monitor.onrender.com (free tier; sleeps when idle, first load may take a minute). Officer pages need the deployment's officer key; the appeal portal is public.
+Live: https://pension-integrity-monitor.onrender.com (free tier; sleeps when idle, first load may take a minute). Staff pages need a named staff account; the family appeal portal is public and uses a one-time code.
 
 
 Ranks pensioners for human review when public-record signals suggest a death may have gone unreported, and manages the full officer review, family appeal and outcome-feedback loop around that ranking.
 
-The system never stops a pension by itself. Flags only order a review queue. A pension is held only after every verification step is complete, written case-specific reasons are recorded, and a second officer approves the hold (dual control). Families get a tracking ID, a deadline and a public appeal portal. A release calculates full arrears for every day held. Every action lands in a tamper-evident hash-chained audit log.
+The system never stops a pension by itself. Flags only order a review queue. A pension is held only after every verification step is complete, written case-specific reasons are recorded, and a different supervisor approves (dual control). Families get a notice with a tracking reference, a fixed appeal deadline and a public appeal portal that works with a one-time code. A death is never final on first approval: it is finalised only after the notice and appeal period, and can be reopened. A release calculates full arrears for every day held. Every action lands in a tamper-evident hash-chained audit log.
 
 ## What it does
 
@@ -15,13 +15,13 @@ The system never stops a pension by itself. Flags only order a review queue. A p
 - **Cost-based priority threshold**: p* = C(false hold) / (C(false hold) + C(missed death)). It ranks the queue; it triggers no action.
 - **Officer review queue** ordered by calibrated probability, with the full signal breakdown and the matched registry entry on each case.
 - **Verification steps** (registrar cross-check, field visit, family contact, bank confirmation) that must all complete before a hold is possible.
-- **Per-officer accounts**: real local officer accounts with scrypt-hashed, salted passwords (no shared key at sign-in). The first account bootstraps from the deployment key; officers are added and deactivated from the Officers page, every change audited. Dual control compares accounts, so one person cannot approve their own hold under a typed name. Sensitive actions (hold approval, officer add/deactivate) require re-entering the account password; accounts created by another officer must change password at first sign-in; deactivation or a password change kills live sessions. Honest scope: this is account-level attribution, not verified human identity - one person holding two accounts still defeats dual control, and that limit is documented, not hidden.
-- **Dual-control holds**: a hold request only marks the case pending; a *different* officer must approve it before anything is held. Approval binds to the evidence snapshot the requester saw: if signals, verification state or the score change before approval, the request is voided and must be re-requested against current evidence. Written reasons are mandatory (minimum length, and reused or near-identical boilerplate from another case is rejected), a family tracking ID and appeal deadline are issued on approval.
-- **Tamper-evident audit log**: every officer and pipeline action is appended to a hash-chained log, and database triggers block UPDATE and DELETE on the log outright. Every entry hash is also dual-written to a separate fsynced anchor file next to the database, so an attacker who rewrites only the database - even recomputing the whole chain - is caught by the anchor mismatch. The anchor write happens before the database commit, so a crash between the two shows as INCOMPLETE for manual review rather than breaking or silently passing. The dashboard replays the chain on every load; any edit or deletion of past entries shows as TAMPER DETECTED. A second copy of each hash goes to a checkpoint file in a different directory, so restoring an older database plus local anchor is also caught. Honest scope: this is local tamper evidence; the database and anchor file share one trust boundary, and an attacker who rewrites both defeats it.
+- **Named staff accounts**: staff sign in with named accounts scoped by role (officer, supervisor, auditor, admin) and jurisdiction; keys are stored as scrypt hashes. Accounts come from the `PIM_USERS` environment variable or the admin command, never from a form field or request header. Dual control compares accounts, so one person cannot approve their own action. Honest scope: this is account-level attribution, not verified human identity - one person holding two accounts still defeats dual control, and that limit is documented, not hidden. It is a stand-in for a department identity provider (SSO with MFA).
+- **Hold or death confirmation with mandatory written reasons**, a different supervisor to approve, a family notice with a tracking reference and a fixed appeal deadline. A death is never final on first approval: it is finalised only after the notice and appeal period, and can be reopened.
+- **Tamper-evident audit**: every staff action on a case is appended to a hash-chained, append-only store with a fixed action vocabulary, so free-text reasons can never reach the chain; checkpoints can be exported to an independent store for verification. Pipeline runs are also written to a hash-chained log whose entry hashes are dual-written to a separate fsynced anchor file, so an attacker who rewrites only the database is caught by the anchor mismatch, and the dashboard replays that chain on every load: any edit or deletion of past entries shows as TAMPER DETECTED. Honest scope: this is local tamper evidence; an attacker who rewrites every copy defeats it.
 - **Queue-flooding circuit breaker and drip watch**: if one pipeline run would create more new cases than a configured cap (`max_new_cases_per_run`, default 500), case creation stops, a loud audit entry and queue warning say to investigate feed integrity, and nothing is held automatically. A cumulative watch also warns when recent runs together exceed 3x the cap, catching flooding that drips in under the per-run cap.
 - **Randomized audit sampling**: a small configurable share (`audit_sample_rate`, default 0.1%) of still-paid, unflagged pensioners enters the queue labelled "audit sample" each run. They are a randomly selected unflagged cohort for measuring outcomes the flags never see; estimates from it still depend on adjudication quality, unresolved samples and sample size.
-- **Family appeal portal** (public, no sign-in): look up a tracking ID, see case status and deadline, submit an appeal. Officers resolve appeals from the appeals page; appeals open longer than the response SLA (`appeal_response_sla_days`, default 14) are marked overdue.
-- **Release with calculated arrears**, computed from days held and monthly pension.
+- **Family appeal portal** (public, no account): reference from the notice, one-time code, case status and deadline, appeal. Payment is restored provisionally on appeal and an independent supervisor decides. Late appeals can be taken in by a supervisor with a reason code. Appeal document upload is off by default. See docs/review-portal.md.
+- **Release with full arrears**, computed from days held and monthly pension.
 - **Outcome feedback**, guarded against feedback-loop bias: verified outcomes recalibrate the signal likelihood ratios with Laplace smoothing only after at least 30 resolved cases with 5+ of each outcome. The configured base rate is never updated from resolved cases (they are a selected sample), and unresolved cases never count as negative.
 - **Feed-health monitoring**: each feed is marked ok, stale or never loaded against its expected cadence.
 
@@ -52,7 +52,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open http://localhost:5000. Officer sign-in requires the `PIM_OFFICER_KEY` environment variable; with no key set, officer pages stay closed. `PIM_SECRET` signs sessions (a random per-boot key is used when unset, which invalidates sessions on restart). On plain HTTP for local development only, set `PIM_INSECURE_HTTP=1` so the session cookie is not marked Secure. The family appeal portal at `/appeal` needs no sign-in.
+Open http://localhost:5000. Staff sign in with named accounts from `PIM_USERS` (`name:role:JURISDICTION|JURISDICTION:key;...`, roles officer, supervisor, auditor, admin); with none set, staff pages stay closed. Keys are stored as scrypt hashes. `PIM_SECRET` signs sessions (a random per-boot key is used when unset, which invalidates sessions on restart). On plain HTTP for local development only, set `PIM_INSECURE_HTTP=1` so the session cookie is not marked Secure. The family appeal portal at `/appeal` needs no sign-in.
 
 Run the end-to-end test suite (uses its own throwaway fixtures in `tests/fixtures`, never loaded into the app):
 
@@ -62,7 +62,7 @@ python tests/test_flow.py
 
 ## Deployment
 
-Free tier on Render (no card required): create a new Web Service from this repo, build command `pip install -r requirements.txt`, start command `python app.py`, and set the `PIM_OFFICER_KEY` and `PIM_SECRET` environment variables. `render.yaml` is included for one-click setup.
+Free tier on Render (no card required): create a new Web Service from this repo, build command `pip install -r requirements.txt`, start command `python app.py`, and set `PIM_USERS` and `PIM_SECRET`. For a synthetic-data demo only, `PIM_DEMO_SHOW_OTP=1` shows the one-time code on screen because no message service is connected. `render.yaml` is included for one-click setup.
 
 ## Public data sources
 

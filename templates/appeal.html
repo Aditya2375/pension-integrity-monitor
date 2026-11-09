@@ -1,29 +1,69 @@
 {% extends "base.html" %}
-{% block title %}Family appeal portal{% endblock %}
+{% block title %}{{ t('portal_title') }}{% endblock %}
 {% block body %}
-<div class="card" style="max-width:640px;margin:0 auto">
-  <h2>Family appeal portal</h2>
+<div class="card narrow">
+  <p class="langs" aria-label="{{ t('language') }}">{{ t('language') }}:
+    {% for code, name in langs.items() %}<a href="?lang={{ code }}" lang="{{ code }}" {{ 'aria-current=true' if code == L }}>{{ name }}</a> {% endfor %}</p>
+  <h2>{{ t('portal_title') }}</h2>
+  {% if err %}<div class="err" role="alert">{{ err }}</div>{% endif %}
+  {% if info %}<div class="msg" role="status">{{ info }}</div>{% endif %}
   {% if submitted %}
-  <div class="msg">Your appeal has been submitted. The department will review it and update the status against your tracking ID.</div>
+  <div class="msg" role="status">{{ t('provisional_note') }}</div>
   {% endif %}
-  {% if err %}<div class="err">{{ err }}</div>{% endif %}
-  <p class="muted">If a pension has been held, the hold notice carries a tracking ID. Enter it to see the case status and the appeal deadline, and to submit an appeal. No sign-in is needed.</p>
+
+  {% if step == 'ref' %}
+  <p>{{ t('portal_intro') }}</p>
   <form method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Tracking ID</label>
-    <input type="text" name="tracking_id" value="{{ request.form.get('tracking_id', '') }}" required>
-    {% if found %}
-    <h3 style="margin-top:16px">Case status</h3>
-    <p>State: <b>{{ found['state'] }}</b> &middot; Scheme: {{ found['scheme'] }}<br>
-    Appeal deadline: <b>{{ deadline or 'n/a' }}</b></p>
-    <label>Your appeal</label>
-    <textarea name="statement" placeholder="Explain why the pensioner is alive; mention any documents you can produce."></textarea>
-    <label>Contact (phone or email, optional)</label>
-    <input type="text" name="contact">
-    <p><button class="btn">Submit appeal</button></p>
-    {% else %}
-    <p><button class="btn">Look up</button></p>
-    {% endif %}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="send_code">
+    <label for="tid">{{ t('ref_label') }}</label>
+    <input id="tid" type="text" name="tracking_id" autocomplete="off" autocapitalize="characters" required>
+    <p><button class="btn">{{ t('send_code') }}</button></p>
   </form>
+  {% elif step == 'code' %}
+  {% if demo_code %}<p class="msg">Synthetic demo only. The code is <b>{{ demo_code }}</b>. A real deployment sends it through a connected message service.</p>{% endif %}
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="check_code">
+    <label for="code">{{ t('code_label') }}</label>
+    <input id="code" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+    <p><button class="btn">{{ t('verify_code') }}</button></p>
+  </form>
+  {% elif step == 'status' and found %}
+  {% set r = found['row'] %}
+  <h3>{{ t('status_title') }}</h3>
+  <ol class="tracker" aria-label="{{ t('status_title') }}">
+    <li class="{{ 'on' if True }}">1. Notice sent</li>
+    <li class="{{ 'on' if r['status'] != 'NOTICE' }}">2. Appeal received</li>
+    <li class="{{ 'on' if r['status'] in ('UPHELD','RELEASED') }}">3. Decision</li>
+  </ol>
+  {% if r['status'] == 'NOTICE' %}
+    {% if found['deadline'] %}<p>{{ t('window_note', date=found['deadline']) }}</p>{% endif %}
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="appeal">
+      <label for="st">{{ t('statement_label') }}</label>
+      <textarea id="st" name="statement" required maxlength="5000"></textarea>
+      <label for="ct">{{ t('contact_label') }}</label>
+      <input id="ct" type="text" name="contact" maxlength="200">
+      {% if evidence_enabled %}
+      <label for="ev">{{ t('evidence_label') }}</label>
+      <input id="ev" type="file" name="evidence" accept=".pdf,.jpg,.jpeg,.png">
+      {% else %}<p class="muted">Documents cannot be uploaded here. Take them to your pension office.</p>{% endif %}
+      <p><button class="btn">{{ t('submit_appeal') }}</button></p>
+    </form>
+  {% elif r['status'] == 'OPEN' %}
+    <p>{{ t('provisional_note') }}</p>
+  {% elif r['status'] == 'RELEASED' %}
+    <p>{{ t('msg_appeal_reversed', tracking_id=r['tracking_id']) }}</p>
+    {% if r['decision'] %}<p class="muted">{{ r['decision'] }}</p>{% endif %}
+  {% elif r['status'] == 'UPHELD' %}
+    <p>{{ t('msg_appeal_upheld', tracking_id=r['tracking_id']) }}</p>
+    {% if r['decision'] %}<p class="muted">{{ r['decision'] }}</p>{% endif %}
+  {% endif %}
+  <p class="muted">{{ t('survivor_note') }}</p>
+  <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="signout"><button class="linkbtn">Sign out of this case</button></form>
+  {% endif %}
+  <p class="muted">{{ t('help_note') }}</p>
 </div>
 {% endblock %}

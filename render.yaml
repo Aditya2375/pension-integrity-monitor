@@ -6,7 +6,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 2 --threads 4 -b 0.0.0.0:$PORT app:app
     envVars:
-      - key: PIM_OFFICER_KEY
-        generateValue: true
+      - key: PIM_USERS
+        sync: false
       - key: PIM_SECRET
         generateValue: true
