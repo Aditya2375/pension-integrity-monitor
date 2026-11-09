@@ -1,5 +1,7 @@
 # Security review
 
+Note: this review describes the earlier single-key build. Named users, per-jurisdiction scopes, four-eyes decisions, one-time-code appeals, evidence quarantine and serialised case actions replaced that model; the single `PIM_OFFICER_KEY` no longer exists. The current controls and their tests are in docs/review-portal.md and docs/security/. The findings below are kept as history.
+
 Date: 2026-11-03. Scope: full application (Flask app, ingestion, pipeline, templates, dependencies, deployment config). Method: manual review of every route, query, template and config file, plus an automated dependency audit (pip-audit).
 
 ## Findings and fixes

@@ -1,6 +1,6 @@
 # Pension Integrity Monitor
 
-Live: https://pension-integrity-monitor.onrender.com (free tier; sleeps when idle, first load may take a minute). Officer pages need the deployment's officer key; the appeal portal is public.
+Live: https://pension-integrity-monitor.onrender.com (free tier; sleeps when idle, first load may take a minute). Staff pages need a named staff account; the family appeal portal is public and uses a one-time code.
 
 
 Ranks pensioners for human review when public-record signals suggest a death may have gone unreported, and manages the full officer review, family appeal and outcome-feedback loop around that ranking.
@@ -15,8 +15,8 @@ The system never stops a pension by itself. Flags only order a review queue. A p
 - **Cost-based priority threshold**: p* = C(false hold) / (C(false hold) + C(missed death)). It ranks the queue; it triggers no action.
 - **Officer review queue** ordered by calibrated probability, with the full signal breakdown and the matched registry entry on each case.
 - **Verification steps** (registrar cross-check, field visit, family contact, bank confirmation) that must all complete before a hold is possible.
-- **Hold with mandatory written reasons**, a family tracking ID and an appeal deadline.
-- **Family appeal portal** (public, no sign-in): look up a tracking ID, see case status and deadline, submit an appeal. Officers resolve appeals from the appeals page.
+- **Hold or death confirmation with mandatory written reasons**, a different supervisor to approve, a family notice with a tracking reference and a fixed appeal deadline. A death is never final on first approval: it is finalised only after the notice and appeal period, and can be reopened.
+- **Family appeal portal** (public, no account): reference from the notice, one-time code, case status and deadline, appeal. Payment is restored provisionally on appeal and an independent supervisor decides. Late appeals can be taken in by a supervisor with a reason code. Appeal document upload is off by default. See docs/review-portal.md.
 - **Release with full arrears**, computed from days held and monthly pension.
 - **Outcome feedback**: verified outcomes (confirmed deceased / confirmed alive) recalibrate the signal likelihood ratios and the base rate with Laplace smoothing, once at least 5 cases are resolved.
 - **Feed-health monitoring**: each feed is marked ok, stale or never loaded against its expected cadence.
@@ -48,7 +48,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open http://localhost:5000. Officer sign-in requires the `PIM_OFFICER_KEY` environment variable; with no key set, officer pages stay closed. `PIM_SECRET` signs sessions (a random per-boot key is used when unset, which invalidates sessions on restart). On plain HTTP for local development only, set `PIM_INSECURE_HTTP=1` so the session cookie is not marked Secure. The family appeal portal at `/appeal` needs no sign-in.
+Open http://localhost:5000. Staff sign in with named accounts from `PIM_USERS` (`name:role:JURISDICTION|JURISDICTION:key;...`, roles officer, supervisor, auditor, admin); with none set, staff pages stay closed. Keys are stored as scrypt hashes. `PIM_SECRET` signs sessions (a random per-boot key is used when unset, which invalidates sessions on restart). On plain HTTP for local development only, set `PIM_INSECURE_HTTP=1` so the session cookie is not marked Secure. The family appeal portal at `/appeal` needs no sign-in.
 
 Run the end-to-end test suite (uses its own throwaway fixtures in `tests/fixtures`, never loaded into the app):
 
@@ -58,7 +58,7 @@ python tests/test_flow.py
 
 ## Deployment
 
-Free tier on Render (no card required): create a new Web Service from this repo, build command `pip install -r requirements.txt`, start command `python app.py`, and set the `PIM_OFFICER_KEY` and `PIM_SECRET` environment variables. `render.yaml` is included for one-click setup.
+Free tier on Render (no card required): create a new Web Service from this repo, build command `pip install -r requirements.txt`, start command `python app.py`, and set `PIM_USERS` and `PIM_SECRET`. For a synthetic-data demo only, `PIM_DEMO_SHOW_OTP=1` shows the one-time code on screen because no message service is connected. `render.yaml` is included for one-click setup.
 
 ## Public data sources
 
