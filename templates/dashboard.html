@@ -11,7 +11,7 @@
 <div class="card mt">
   <h2>Highest-priority cases</h2>
   {% if top %}
-  <div class="table-wrap"><table>
+  <div class="table-wrap" role="region" tabindex="0" aria-label="Table (scrolls sideways on small screens)"><table>
     <tr><th scope="col">Case</th><th scope="col">Pensioner</th><th scope="col">Scheme</th><th scope="col">Review priority</th><th scope="col">State</th><th scope="col"></th></tr>
     {% for c in top %}
     <tr>
@@ -31,17 +31,19 @@
 
 <div class="card">
   <h2>Feed status</h2>
-  <div class="table-wrap"><table>
-    <tr><th scope="col">Feed</th><th scope="col">Last ingest</th><th scope="col">Rows loaded</th><th scope="col">Rejected</th><th scope="col">State</th></tr>
+  <div class="table-wrap" role="region" tabindex="0" aria-label="Table (scrolls sideways on small screens)"><table class="stack">
+    <thead><tr><th scope="col">Feed</th><th scope="col">Last ingest</th><th scope="col">Rows loaded</th><th scope="col">Rejected</th><th scope="col">State</th></tr></thead>
+    <tbody>
     {% for f in feeds %}
     <tr>
-      <td>{{ f['name'] }}</td>
-      <td>{{ f['last_ingest_at'] or 'never' }}</td>
-      <td>{{ f['rows_loaded'] }}</td>
-      <td>{{ f['rows_rejected'] }}</td>
-      <td><span class="pill {{ 'ok' if f['state'] == 'ok' else ('warn' if f['state'] == 'stale' else 'grey') }}">{{ f['state'].replace('_', ' ') }}</span></td>
+      <th scope="row">{{ f['name'] }}</th>
+      <td data-label="Last ingest">{{ f['last_ingest_at'] or 'never' }}</td>
+      <td data-label="Rows loaded">{{ f['rows_loaded'] }}</td>
+      <td data-label="Rejected">{{ f['rows_rejected'] }}</td>
+      <td data-label="State"><span class="pill {{ 'ok' if f['state'] == 'ok' else ('warn' if f['state'] == 'stale' else 'grey') }}">{{ f['state'].replace('_', ' ') }}</span></td>
     </tr>
     {% endfor %}
+    </tbody>
   </table></div>
 </div>
 {% endblock %}

@@ -95,3 +95,8 @@ form .btn { margin-top:14px; }
 .pill { white-space:nowrap; }
 .btn + .btn, .btn + a.btn, button + .btn { margin-left:8px; }
 @media (max-width:640px) { .btn + .btn, button + .btn { margin-left:0; } }
+.table-wrap { background:linear-gradient(to right,#fff 30%,rgba(255,255,255,0)) left center/40px 100% no-repeat local,
+  linear-gradient(to left,#fff 30%,rgba(255,255,255,0)) right center/40px 100% no-repeat local,
+  linear-gradient(to right,rgba(0,0,0,.18),rgba(0,0,0,0)) left center/12px 100% no-repeat scroll,
+  linear-gradient(to left,rgba(0,0,0,.18),rgba(0,0,0,0)) right center/12px 100% no-repeat scroll; }
+@media (max-width:640px) { .btn + a.btn { margin-left:0; } .row .btn + a.btn { margin-left:0; } }
