@@ -3,16 +3,18 @@
 <div class="card">
   <h2>Feed health</h2>
   <p class="muted">A feed older than its expected cadence is marked stale; scoring that depends on stale feeds should be treated with caution.</p>
-  <div class="table-wrap"><table>
-    <tr><th scope="col">Feed</th><th scope="col">Cadence</th><th scope="col">Last ingest</th><th scope="col">Age (days)</th><th scope="col">Loaded</th><th scope="col">Rejected</th><th scope="col">State</th></tr>
+  <div class="table-wrap" role="region" tabindex="0" aria-label="Table (scrolls sideways on small screens)"><table class="stack">
+    <thead><tr><th scope="col">Feed</th><th scope="col">Cadence</th><th scope="col">Last ingest</th><th scope="col">Age (days)</th><th scope="col">Loaded</th><th scope="col">Rejected</th><th scope="col">State</th></tr></thead>
+    <tbody>
     {% for f in feeds %}
     <tr>
-      <td>{{ f['name'] }}</td><td>{{ f['cadence_days'] }}d</td>
-      <td>{{ f['last_ingest_at'] or 'never' }}</td><td>{{ f['age_days'] if f['age_days'] is not none else '-' }}</td>
-      <td>{{ f['rows_loaded'] }}</td><td>{{ f['rows_rejected'] }}</td>
-      <td><span class="pill {{ 'ok' if f['state'] == 'ok' else ('warn' if f['state'] == 'stale' else 'grey') }}">{{ f['state'].replace('_', ' ') }}</span></td>
+      <th scope="row">{{ f['name'] }}</th><td data-label="Cadence">{{ f['cadence_days'] }}d</td>
+      <td data-label="Last ingest">{{ f['last_ingest_at'] or 'never' }}</td><td data-label="Age (days)">{{ f['age_days'] if f['age_days'] is not none else '-' }}</td>
+      <td data-label="Loaded">{{ f['rows_loaded'] }}</td><td data-label="Rejected">{{ f['rows_rejected'] }}</td>
+      <td data-label="State"><span class="pill {{ 'ok' if f['state'] == 'ok' else ('warn' if f['state'] == 'stale' else 'grey') }}">{{ f['state'].replace('_', ' ') }}</span></td>
     </tr>
     {% endfor %}
+    </tbody>
   </table></div>
 </div>
 {% endblock %}
