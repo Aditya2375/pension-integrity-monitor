@@ -19,7 +19,7 @@
 <div class="card">
   <h2>Evidence</h2>
   <p class="muted">Supporting and conflicting signals are shown together. Absent signals count as much as present ones.</p>
-  <table>
+  <div class="table-wrap"><table>
     <caption class="sr">Signals for this case</caption>
     <thead><tr><th scope="col">Signal</th><th scope="col">Seen</th><th scope="col">Effect on priority</th></tr></thead>
     <tbody>
@@ -29,7 +29,7 @@
     <td>{{ 'Raises priority' if v > 0.05 else ('Lowers priority' if v < -0.05 else 'Little effect') }} <span class="muted">({{ s['value'] }})</span></td></tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% if match %}
   <h3>Death-registry match</h3>
   <p>Registry entry {{ match['registration_no'] }}: name <b>{{ match['dname'] }}</b>, date of death {{ match['date_of_death'] }}, {{ match['registrar'] or 'district not given' }}.
@@ -197,12 +197,12 @@
 <div class="card">
   <h2>Messages to the family</h2>
   {% if not delivery_ready %}<p class="err">No message service is connected on this system. These messages are queued only and have not been sent.</p>{% endif %}
-  <table>
+  <div class="table-wrap"><table>
     <caption class="sr">Queued and sent messages</caption>
     <thead><tr><th scope="col">Message</th><th scope="col">Queued</th><th scope="col">Status</th></tr></thead>
     <tbody>{% for o in outbox %}<tr><td>{{ o['template'].replace('_',' ') }}</td><td>{{ o['created_at'] }}</td>
     <td>{{ {'PENDING':'Queued, not sent','SENT':'Sent','FAILED':'Failed after retries'}[o['status']] }}{% if o['attempts'] %} ({{ o['attempts'] }} tries){% endif %}</td></tr>{% endfor %}</tbody>
-  </table>
+  </table></div>
 </div>
 {% endif %}
 
@@ -217,10 +217,10 @@
   </form>
   {% endif %}
   <h3>Audit trail</h3>
-  <table>
+  <div class="table-wrap"><table>
     <caption class="sr">Tamper-evident history of this case</caption>
     <thead><tr><th scope="col">When (UTC)</th><th scope="col">Who</th><th scope="col">What</th></tr></thead>
     <tbody>{% for e in trail %}<tr><td>{{ e['ts'] }}</td><td>{{ e['actor'] }}</td><td>{{ e['action'].replace('_',' ').replace(':',': ') }}</td></tr>{% endfor %}</tbody>
-  </table>
+  </table></div>
 </div>
 {% endblock %}

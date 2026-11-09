@@ -2,8 +2,8 @@
 {% block title %}{{ t('portal_title') }}{% endblock %}
 {% block body %}
 <div class="card narrow">
-  <p class="langs" aria-label="{{ t('language') }}">{{ t('language') }}:
-    {% for code, name in langs.items() %}<a href="?lang={{ code }}" lang="{{ code }}" {{ 'aria-current=true' if code == L }}>{{ name }}</a> {% endfor %}</p>
+  <nav class="lang" aria-label="{{ t('language') }}"><span>{{ t('language') }}:</span>
+    {% for code, name in langs.items() %}<a href="?lang={{ code }}" lang="{{ code }}" {{ 'aria-current=true' if code == L }}>{{ name }}</a> {% endfor %}</nav>
   <h2>{{ t('portal_title') }}</h2>
   {% if err %}<div class="err" role="alert">{{ err }}</div>{% endif %}
   {% if info %}<div class="msg" role="status">{{ info }}</div>{% endif %}

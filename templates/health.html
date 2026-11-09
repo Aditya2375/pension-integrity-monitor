@@ -3,7 +3,7 @@
 <div class="card">
   <h2>Feed health</h2>
   <p class="muted">A feed older than its expected cadence is marked stale; scoring that depends on stale feeds should be treated with caution.</p>
-  <table>
+  <div class="table-wrap"><table>
     <tr><th scope="col">Feed</th><th scope="col">Cadence</th><th scope="col">Last ingest</th><th scope="col">Age (days)</th><th scope="col">Loaded</th><th scope="col">Rejected</th><th scope="col">State</th></tr>
     {% for f in feeds %}
     <tr>
@@ -13,6 +13,6 @@
       <td><span class="pill {{ 'ok' if f['state'] == 'ok' else ('warn' if f['state'] == 'stale' else 'grey') }}">{{ f['state'].replace('_', ' ') }}</span></td>
     </tr>
     {% endfor %}
-  </table>
+  </table></div>
 </div>
 {% endblock %}

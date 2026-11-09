@@ -12,24 +12,24 @@
     <noscript><button class="btn ghost">Filter</button></noscript>
   </form>
   {% if rows %}
-  <table>
+  <div class="table-wrap"><table class="stack">
     <caption class="sr">Open cases ranked by review priority</caption>
     <thead><tr><th scope="col">Case</th><th scope="col">Pensioner</th><th scope="col">Scheme</th><th scope="col">Monthly</th><th scope="col">Review priority</th><th scope="col">State</th><th scope="col">Due</th><th scope="col"><span class="sr">Open</span></th></tr></thead>
     <tbody>
     {% for c in rows %}
     <tr>
       <th scope="row">#{{ c['id'] }}</th>
-      <td>{{ c['name'] }}<br><span class="muted">{{ c['pensioner_id'] }}</span></td>
-      <td>{{ c['scheme'] }}</td>
-      <td>{{ c['monthly_amount'] }}</td>
-      <td>{{ '%.2f'|format(c['probability']) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
-      <td>{{ c['state'].replace('_',' ').title() }}</td>
-      <td>{% if c['sla'] %}<span class="pill {{ 'warn' if c['sla'][0] == 'overdue' else 'grey' }}">{{ 'Overdue' if c['sla'][0] == 'overdue' else ('Due soon' if c['sla'][0] == 'due_soon' else 'On time') }}</span>{% endif %}</td>
-      <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Review<span class="sr"> case {{ c['id'] }}</span></a></td>
+      <td data-label="Pensioner">{{ c['name'] }}<br><span class="muted">{{ c['pensioner_id'] }}</span></td>
+      <td data-label="Scheme">{{ c['scheme'] }}</td>
+      <td data-label="Monthly">{{ c['monthly_amount'] }}</td>
+      <td data-label="Review priority">{{ '%.2f'|format(c['probability']) }}{% if c['priority'] %} <span class="pill pri">priority</span>{% endif %}</td>
+      <td data-label="State">{{ c['state'].replace('_',' ').title() }}</td>
+      <td data-label="Due">{% if c['sla'] %}<span class="pill {{ 'warn' if c['sla'][0] == 'overdue' else 'grey' }}">{{ 'Overdue' if c['sla'][0] == 'overdue' else ('Due soon' if c['sla'][0] == 'due_soon' else 'On time') }}</span>{% endif %}</td>
+      <td data-label="Action"><a href="{{ url_for('case_detail', cid=c['id']) }}">Review<span class="sr"> case {{ c['id'] }}</span></a></td>
     </tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% else %}
   <div class="empty"><b>The queue is empty.</b><br>Cases appear when the detector flags a pensioner for review.</div>
   {% endif %}

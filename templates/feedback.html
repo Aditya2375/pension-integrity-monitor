@@ -9,11 +9,11 @@
 </div>
 <div class="card">
   <h2>Current signal weights</h2>
-  <table>
+  <div class="table-wrap"><table>
     <tr><th scope="col">Signal</th><th scope="col">LR+</th><th scope="col">LR-</th><th scope="col">Updated</th></tr>
     {% for w in weights %}
     <tr><td>{{ w['signal'].replace('_', ' ') }}</td><td>{{ w['lr_plus'] }}</td><td>{{ w['lr_minus'] }}</td><td class="muted">{{ w['updated_at'] or 'default' }}</td></tr>
     {% endfor %}
-  </table>
+  </table></div>
 </div>
 {% endblock %}

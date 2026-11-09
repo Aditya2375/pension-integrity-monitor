@@ -13,7 +13,7 @@
   Cadence: every {{ f['cadence_days'] }} days &middot; Last ingest: {{ f['last_ingest_at'] or 'never' }} &middot; Loaded {{ f['rows_loaded'] }}, rejected {{ f['rows_rejected'] }}</p>
   <form method="post" action="{{ url_for('ingest_upload', feed_id=f['feed_id']) }}" enctype="multipart/form-data" class="row">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input type="file" name="file" accept=".csv" required class="narrowfile">
+    <input type="file" name="file" accept=".csv" required class="narrowfile" aria-label="CSV file for {{ f['feed_id'] }}">
     <button class="btn">Upload</button>
     <a class="btn ghost" href="{{ url_for('template', feed_id=f['feed_id']) }}">Download template</a>
   </form>
