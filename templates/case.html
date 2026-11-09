@@ -5,7 +5,7 @@
 {% set role = me.role %}
 <div class="card">
   <h2>Case #{{ case['id'] }}: {{ case['name'] }} <span class="pill grey">{{ st.replace('_',' ').title() }}</span></h2>
-  <p>{{ case['pensioner_id'] }} &middot; {{ case['scheme'] }} &middot; {{ case['gender'] }} &middot; Date of birth {{ case['dob'] }}<br>
+  <p>{{ case['pensioner_id'] }} &middot; {{ case['scheme'] or 'scheme not recorded' }} &middot; {{ case['gender'] or 'gender not recorded' }} &middot; Date of birth {{ case['dob'] or 'not recorded' }}<br>
   <span class="muted">{{ case['address'] or 'No address on record' }} &middot; Monthly pension {{ case['monthly_amount'] }}</span></p>
   <p>Review priority score: <b>{{ '%.2f'|format(case['probability']) }}</b>
   <span class="muted">(uncalibrated; it orders the queue and is never a reason to stop a pension)</span></p>
@@ -27,6 +27,8 @@
     {% set v = s['value']|float(0) %}
     <tr><th scope="row">{{ s['signal'].replace('_', ' ') }}</th><td>{{ 'Yes' if s['present'] else 'No' }}</td>
     <td>{{ 'Raises priority' if v > 0.05 else ('Lowers priority' if v < -0.05 else 'Little effect') }} <span class="muted">({{ s['value'] }})</span></td></tr>
+    {% else %}
+    <tr><td colspan="3">No signals recorded for this case.</td></tr>
     {% endfor %}
     </tbody>
   </table></div>
@@ -124,7 +126,7 @@
     <label for="lc">Reason</label>
     <select id="lc" name="code">{% for k, v in late_reasons.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
     <label for="ln">Note, in writing</label><input id="ln" type="text" name="note" required maxlength="2000">
-    <p><button class="btn warn">Take late appeal into review</button></p></form>
+    <p><button class="btn">Take late appeal into review</button></p></form>
 </div>
 {% endif %}
 {% if st in ['NOTICE','HELD'] and role == 'supervisor' and case['case_kind'] != 'death' %}

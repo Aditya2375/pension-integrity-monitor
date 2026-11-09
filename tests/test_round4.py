@@ -244,3 +244,25 @@ def test_templates_have_no_inline_styles_and_labelled_fields():
         assert ' style="' not in s, f"inline style (blocked by CSP) in {f}"
         for m in re.finditer(r"<label(?![^>]*\bfor=)[^>]*>(.*?)</label>", s, re.S):
             assert "<input" in m.group(1), f"label without for in {f}: {m.group(0)[:60]}"
+
+
+def test_family_portal_status_is_translated_and_marks_current_step(fresh_db):
+    from conftest import Client
+    cid, tid = _noticed()
+    fam = Client()
+    code = fam.post("/appeal", {"action": "send_code", "tracking_id": tid}, csrf="/appeal").data.split(b"<b>")[1].split(b"</b>")[0].decode()
+    fam.post("/appeal", {"action": "check_code", "code": code}, csrf="/appeal")
+    en = fam.get("/appeal").get_data(as_text=True)
+    assert "1. Notice sent" in en and 'aria-current=step' in en
+    hi = fam.get("/appeal?lang=hi").get_data(as_text=True)
+    assert "सूचना भेजी गई" in hi and "Notice sent" not in hi and "Sign out of this case" not in hi
+    assert "Family appeal portal" not in hi
+
+
+def test_public_portal_rejects_huge_bodies_and_odd_ids(fresh_db):
+    from conftest import Client
+    a = Client()
+    r = a.c.post("/appeal", data=b"x" * (9 * 1024 * 1024), content_type="application/octet-stream")
+    assert r.status_code == 413
+    assert a.get("/case/99999999999999999999").status_code in (302, 404)
+    assert a.get("/nope").status_code == 404 and b"Page not found" in a.get("/nope").data

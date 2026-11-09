@@ -27,9 +27,9 @@
       <button class="linkbtn">Sign out ({{ me_user }}, {{ me_role }})</button>
     </form>
     {% else %}
-    <a href="{{ url_for('appeal_portal') }}">Family appeal portal</a>
-    <a href="{{ url_for('context_page') }}">Public data context</a>
-    <a href="{{ url_for('login') }}">Staff sign in</a>
+    <a href="{{ url_for('appeal_portal') }}">{{ t('nav_portal') if t else 'Family appeal portal' }}</a>
+    <a href="{{ url_for('context_page') }}">{{ t('nav_context') if t else 'Public data context' }}</a>
+    <a href="{{ url_for('login') }}">{{ t('nav_staff') if t else 'Staff sign in' }}</a>
     {% endif %}
   </nav>
 </header>
