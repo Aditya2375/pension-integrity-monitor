@@ -25,18 +25,23 @@ class Scan(HTMLParser):
             labelled = self.in_label or a.get("aria-label") or a.get("aria-labelledby")
             self.fields.append((a.get("id"), bool(labelled)))
         if tag == "img" and "alt" not in a: self.problems.append("img without alt")
+        if tag == "span" and a.get("class") == "sr" and getattr(self, "cur_th", None) is not None: self.th_sr = True
         if tag == "a":
             self.cur_a = ""
             if not a.get("href"): self.problems.append("a without href")
         if tag == "th" and "scope" not in a: self.problems.append("th without scope")
+        if tag == "th": self.cur_th = ""
         if "style" in a: self.problems.append("inline style")
         if tag == "form" and a.get("method", "get").lower() == "post" and False: pass
     def handle_endtag(self, tag):
+        if tag == "th" and getattr(self, "cur_th", None) is not None and not self.cur_th.strip() and not getattr(self, "th_sr", False): self.problems.append("empty th")
+        if tag == "th": self.cur_th = None; self.th_sr = False
         if tag == "label": self.in_label = False
         if tag == "a":
             if self.cur_a is not None and not self.cur_a.strip(): self.problems.append("empty link text")
             self.cur_a = None
     def handle_data(self, d):
+        if getattr(self, "cur_th", None) is not None: self.cur_th += d
         if self.cur_a is not None: self.cur_a += d
 
 
