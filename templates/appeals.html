@@ -3,21 +3,21 @@
 <div class="card">
   <h2>Family appeals</h2>
   {% if rows %}
-  <table>
+  <div class="table-wrap"><table class="stack">
     <caption class="sr">Appeals</caption>
     <thead><tr><th scope="col">Reference</th><th scope="col">Pensioner</th><th scope="col">Updated</th><th scope="col">Status</th><th scope="col">Case</th></tr></thead>
     <tbody>
     {% for a in rows %}
     <tr>
       <th scope="row"><code>{{ a['tracking_id'] }}</code></th>
-      <td>{{ a['name'] }}<br><span class="muted">{{ a['pensioner_id'] }}</span></td>
-      <td>{{ a['submitted_at'] }}</td>
-      <td>{{ 'Notice sent' if a['status'] == 'NOTICE' else a['status'].title() }}{% if a['decision'] %}<br><span class="muted">{{ a['decision'] }}</span>{% endif %}</td>
-      <td><a href="{{ url_for('case_detail', cid=a['case_id']) }}">Open case {{ a['case_id'] }}</a></td>
+      <td data-label="Pensioner">{{ a['name'] }}<br><span class="muted">{{ a['pensioner_id'] }}</span></td>
+      <td data-label="Updated">{{ a['submitted_at'] }}</td>
+      <td data-label="Status">{{ 'Notice sent' if a['status'] == 'NOTICE' else a['status'].title() }}{% if a['decision'] %}<br><span class="muted">{{ a['decision'] }}</span>{% endif %}</td>
+      <td data-label="Case"><a href="{{ url_for('case_detail', cid=a['case_id']) }}">Open case {{ a['case_id'] }}</a></td>
     </tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% else %}
   <div class="empty"><b>No appeals.</b><br>A reference is created when a supervisor approves a notice.</div>
   {% endif %}

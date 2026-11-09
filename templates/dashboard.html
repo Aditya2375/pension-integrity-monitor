@@ -11,7 +11,7 @@
 <div class="card mt">
   <h2>Highest-priority cases</h2>
   {% if top %}
-  <table>
+  <div class="table-wrap"><table>
     <tr><th scope="col">Case</th><th scope="col">Pensioner</th><th scope="col">Scheme</th><th scope="col">Review priority</th><th scope="col">State</th><th scope="col"></th></tr>
     {% for c in top %}
     <tr>
@@ -23,7 +23,7 @@
       <td><a href="{{ url_for('case_detail', cid=c['id']) }}">Open</a></td>
     </tr>
     {% endfor %}
-  </table>
+  </table></div>
   {% else %}
   <div class="empty"><b>No cases yet.</b><br>Load department feeds on the ingestion page and run the pipeline. Cases appear here ranked for officer review.</div>
   {% endif %}
@@ -31,7 +31,7 @@
 
 <div class="card">
   <h2>Feed status</h2>
-  <table>
+  <div class="table-wrap"><table>
     <tr><th scope="col">Feed</th><th scope="col">Last ingest</th><th scope="col">Rows loaded</th><th scope="col">Rejected</th><th scope="col">State</th></tr>
     {% for f in feeds %}
     <tr>
@@ -42,6 +42,6 @@
       <td><span class="pill {{ 'ok' if f['state'] == 'ok' else ('warn' if f['state'] == 'stale' else 'grey') }}">{{ f['state'].replace('_', ' ') }}</span></td>
     </tr>
     {% endfor %}
-  </table>
+  </table></div>
 </div>
 {% endblock %}
