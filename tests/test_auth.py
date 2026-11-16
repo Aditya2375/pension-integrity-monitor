@@ -2,8 +2,8 @@ import pytest
 from conftest import Client, as_user
 import app as app_module
 
-PUBLIC_GET = ["/login", "/appeal", "/context", "/templates/pension_master.csv", "/static/style.css"]
-PROTECTED_GET = ["/", "/queue", "/queue/export", "/case/1", "/appeals", "/feedback", "/health", "/ingest", "/settings", "/evidence/1"]
+PUBLIC_GET = ["/", "/benchmark", "/login", "/appeal", "/context", "/templates/pension_master.csv", "/static/style.css"]
+PROTECTED_GET = ["/staff", "/queue", "/queue/export", "/case/1", "/appeals", "/feedback", "/health", "/ingest", "/settings", "/evidence/1"]
 PROTECTED_POST = ["/pipeline/run", "/ingest/pension_master", "/case/1/propose", "/case/1/decide", "/case/1/release",
                   "/case/1/dismiss", "/case/1/verify", "/case/1/suspend", "/case/1/appeal-decision", "/case/1/note",
                   "/feedback/recalibrate", "/settings", "/logout"]

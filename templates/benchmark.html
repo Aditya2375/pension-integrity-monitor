@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Synthetic benchmark - Pension Integrity Monitor{% endblock %}
+{% block body %}
+<div class="banner" role="note"><b>Synthetic benchmark.</b> All 200,000 records were written by a seeded generator. No real person's data is in it. These are not real-world accuracy figures.</div>
+
+<section class="card hero" aria-labelledby="h-bench">
+  <h2 id="h-bench">200,000-record synthetic benchmark</h2>
+  <p class="lead">A frozen research detector (V15) was scored once, blind, on 200,000 synthetic pensioners across 29 administrative feeds with known ground truth.</p>
+  <div class="grid" role="list">
+    <div class="stat" role="listitem"><div class="n">99.13%</div><div class="l">Precision</div></div>
+    <div class="stat" role="listitem"><div class="n">88.81%</div><div class="l">Recall</div></div>
+    <div class="stat" role="listitem"><div class="n">59</div><div class="l">Living people wrongly flagged, of 191,600</div></div>
+    <div class="stat" role="listitem"><div class="n">0 of 825</div><div class="l">Already-stopped decoys flagged</div></div>
+  </div>
+  <p class="muted mt">Threshold 0.5, fixed before scoring. 6,786 flagged: 6,727 true detections, 59 living. 848 of the 7,575 targets were missed.</p>
+</section>
+
+<section class="card" aria-labelledby="h-sep">
+  <h2 id="h-sep">This is not the score the app shows</h2>
+  <p>The figures above measure the frozen V15 research detector on synthetic feeds. The app in this demo uses its own configurable likelihood-ratio scorer to rank a review queue. The benchmark result is not inherited by the app, and the app's queue has not been measured on real data. The app's scores are review priority, not the chance that someone has died.</p>
+</section>
+
+<section class="card" aria-labelledby="h-comp">
+  <h2 id="h-comp">What is in the set</h2>
+  <div class="table-wrap" role="region" tabindex="0" aria-label="Benchmark composition (scrolls sideways on small screens)"><table>
+    <tr><th scope="col">Class</th><th scope="col">Count</th></tr>
+    <tr><td>Living pensioners</td><td>191,600</td></tr>
+    <tr><td>Deceased, pension still paid (detection targets)</td><td>7,575</td></tr>
+    <tr><td>Deceased, pension already stopped (decoys)</td><td>825</td></tr>
+    <tr><td><b>Total</b></td><td><b>200,000</b></td></tr>
+  </table></div>
+  <p class="mt">Hard cases are included: 1,496 targets died within 45 days of the snapshot, 1,903 have no registered death record, and 385 are both. V15 caught 147 of those 385.</p>
+</section>
+
+<section class="card" aria-labelledby="h-fair">
+  <h2 id="h-fair">How it was kept honest</h2>
+  <ol class="steps">
+    <li>The detector was frozen on 4 Nov 2026 at 16:28 IST, before the set existed.</li>
+    <li>The data mix was declared and hashed before any generation.</li>
+    <li>The set was generated once from a published generator and seed.</li>
+    <li>The frozen detector was scored once. Nothing was tuned on this set.</li>
+    <li>Regenerating from the published files reproduces all 29 feeds byte for byte.</li>
+  </ol>
+  <p class="muted">Rejected candidates and their numbers are published too.</p>
+  <p><a href="https://github.com/Aditya2375/pension-integrity-monitor/tree/main/benchmark">Generator, declaration, labels and hashes on GitHub</a></p>
+  <p class="muted">Real-world accuracy is unknown until a shadow test on real records, which has not happened.</p>
+</section>
+{% endblock %}

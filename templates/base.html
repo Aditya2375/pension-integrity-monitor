@@ -9,9 +9,10 @@
 <body>
 <a class="skip" href="#main">{{ t('skip_link') if t else 'Skip to main content' }}</a>
 <header class="top">
-  <h1>Pension Integrity Monitor</h1>
+  <h1><a class="brand" href="{{ url_for('home') }}">Pension Integrity Monitor</a></h1>
   <nav aria-label="Main">
     {% if me_user %}
+    <a href="{{ url_for('home') }}">Overview</a>
     <a href="{{ url_for('dashboard') }}">Dashboard</a>
     <a href="{{ url_for('queue') }}">Review queue</a>
     <a href="{{ url_for('appeals') }}">Appeals</a>
@@ -27,6 +28,8 @@
       <button class="linkbtn">Sign out ({{ me_user }}, {{ me_role }})</button>
     </form>
     {% else %}
+    <a href="{{ url_for('home') }}">Overview</a>
+    <a href="{{ url_for('benchmark_page') }}">Benchmark</a>
     <a href="{{ url_for('appeal_portal') }}">{{ t('nav_portal') if t else 'Family appeal portal' }}</a>
     <a href="{{ url_for('context_page') }}">{{ t('nav_context') if t else 'Public data context' }}</a>
     <a href="{{ url_for('login') }}">{{ t('nav_staff') if t else 'Staff sign in' }}</a>

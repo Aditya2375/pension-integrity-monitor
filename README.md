@@ -1,6 +1,6 @@
 # Pension Integrity Monitor
 
-Live: https://pension-integrity-monitor.onrender.com (free tier; sleeps when idle, first load may take a minute). Staff pages need a named staff account; the family appeal portal is public and uses a one-time code.
+Live: https://pension-integrity-monitor.onrender.com (free tier; sleeps when idle, first load may take a minute). The home page is a public synthetic-demo overview and `/benchmark` shows the frozen synthetic benchmark. Staff pages (dashboard at `/staff`) need a named staff account; the family appeal portal is public and uses a one-time code.
 
 
 Ranks pensioners for human review when public-record signals suggest a death may have gone unreported, and manages the full officer review, family appeal and outcome-feedback loop around that ranking.

@@ -27,12 +27,12 @@ def add_steps(c, cid, steps=None, done=1):
 def test_dashboard_export_queue_appeals_scoped(fresh_db):
     c = db.connect(); seed(c); c.close()
     rev = as_user("rev1")
-    for path in ("/", "/queue", "/queue/export", "/appeals"):
+    for path in ("/staff", "/queue", "/queue/export", "/appeals"):
         body = rev.get(path).data
         assert b"CrossScope Secret Name" not in body and b"PRIVATE-KA" not in body, path
     kar = as_user("kar1")
     assert b"PRIVATE-KA" in kar.get("/queue/export").data
-    assert b"Local Person" not in kar.get("/").data
+    assert b"Local Person" not in kar.get("/staff").data
     assert kar.get("/case/1").status_code in (200, 404)
 
 
@@ -193,7 +193,7 @@ def test_role_and_scope_change_applies_immediately(fresh_db):
     c = db.connect(); c.execute("UPDATE users SET role='auditor' WHERE username='sup1'"); c.commit(); c.close()
     assert cl.post("/case/1/decide", {"verdict": "approve"}).status_code == 403
     c = db.connect(); c.execute("UPDATE users SET jurisdictions='KA' WHERE username='sup1'"); c.commit(); c.close()
-    assert b"Local Person" not in cl.get("/").data
+    assert b"Local Person" not in cl.get("/staff").data
 
 
 # honest UI: nothing claims a message was sent

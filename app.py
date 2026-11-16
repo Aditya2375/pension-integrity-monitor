@@ -178,6 +178,16 @@ def logout():
     return redirect(url_for("login"))
 
 @app.route("/")
+def home():
+    """Public synthetic-demo overview. No sign-in, no database reads, no staff data."""
+    return render_template("home.html")
+
+@app.route("/benchmark")
+def benchmark_page():
+    """Public: the frozen synthetic benchmark, kept apart from the app scorer."""
+    return render_template("benchmark.html")
+
+@app.route("/staff")
 def dashboard():
     r = officer_required()
     if r: return r

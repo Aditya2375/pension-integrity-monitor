@@ -69,8 +69,8 @@ def test_all_pages_pass_static_audit(fresh_db):
     import test_flow as T
     adm = as_user("adm1"); T.load(adm)
     cid = case_id()
-    pages = {"anon": ["/login", "/appeal", "/appeal?lang=hi", "/context"],
-             "adm1": ["/", "/queue", f"/case/{cid}", "/appeals", "/settings", "/health", "/feedback", "/ingest", "/context"]}
+    pages = {"anon": ["/", "/benchmark", "/login", "/appeal", "/appeal?lang=hi", "/context"],
+             "adm1": ["/staff", "/queue", f"/case/{cid}", "/appeals", "/settings", "/health", "/feedback", "/ingest", "/context"]}
     bad = {}
     for who, paths in pages.items():
         cl = Client() if who == "anon" else adm

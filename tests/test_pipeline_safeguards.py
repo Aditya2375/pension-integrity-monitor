@@ -227,7 +227,7 @@ def test_circuit_breaker_and_audit_sampling(dbs):
     conn.close()
 
     # dashboard reports the (untampered) chain as intact
-    r = c.get("/")
+    r = c.get("/staff")
     assert b"intact" in r.data
 
 
@@ -243,7 +243,7 @@ def test_appeal_overdue_marker(dbs):
         "INSERT INTO appeals(tracking_id,case_id,submitted_at,statement,status) VALUES(?,?,?,?, 'OPEN')",
         ("APL-TESTOLD1", cid, "2020-01-01T00:00:00Z", "old appeal"))
     conn.commit(); conn.close()
-    r = c.get("/")
+    r = c.get("/staff")
     m = re.search(rb'class="n">(\d+)</div><div class="l">Appeals open past the response SLA', r.data)
     assert m and int(m.group(1)) >= 1
 

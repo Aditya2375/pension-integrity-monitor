@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Pension Integrity Monitor - public synthetic demo{% endblock %}
+{% block body %}
+<div class="banner" role="note"><b>Synthetic demo.</b> Everything on this site is built on made-up data. No real pensioner, no real government feed and no production data is connected.</div>
+
+<section class="card hero" aria-labelledby="h-intro">
+  <h2 id="h-intro">Find pensions that keep paying after a death, without stopping anyone's pension by mistake</h2>
+  <p class="lead">When a pensioner dies and nobody reports it, the pension can keep being paid for years. The Pension Integrity Monitor ranks pensioners whose records suggest a death may have gone unreported, so a human officer can check the case. It orders a review queue. It never stops a pension by itself.</p>
+  <div class="cta">
+    <a class="btn" href="{{ url_for('benchmark_page') }}">See the benchmark</a>
+    <a class="btn ghost" href="{{ url_for('appeal_portal') }}">Family appeal portal</a>
+    <a class="btn ghost" href="{{ url_for('login') }}">Staff sign in</a>
+  </div>
+</section>
+
+<section class="card" aria-labelledby="h-how">
+  <h2 id="h-how">How a case moves</h2>
+  <ol class="steps">
+    <li><b>Feeds in.</b> Department records (pension roll, death registry, life certificates, bank and telecom activity, hospital, electoral and others) are loaded by staff as CSV files, each checked against a documented schema.</li>
+    <li><b>Score and rank.</b> Each pensioner gets a review-priority score from the evidence for and against a death. Quiet records alone never convict: silence without a sharp stop is capped.</li>
+    <li><b>Human review.</b> An officer works the case through registrar cross-check, field visit, family contact and bank confirmation. Reasons are written down.</li>
+    <li><b>Two people decide.</b> A different supervisor must approve. A death is final only after a notice and appeal period, and can be reopened.</li>
+    <li><b>Families can appeal.</b> The notice carries a reference and a deadline. Payment continues provisionally while an independent supervisor reviews the appeal.</li>
+    <li><b>Everything is logged</b> in a tamper-evident, hash-chained audit trail.</li>
+  </ol>
+</section>
+
+<section class="cols" aria-label="Key points">
+  <div class="card"><h3>Human in the loop</h3><p>Flags only order a queue. No hold, stop or payment change happens without verification steps, written reasons and a second approver.</p></div>
+  <div class="card"><h3>Appeals built in</h3><p>Families get a public portal with a one-time code, a tracking reference and a fixed deadline. A release calculates full arrears for every day held.</p></div>
+  <div class="card"><h3>Open evidence</h3><p>The benchmark generator, the pre-committed mix declaration and hashes are public, so the result can be reproduced.</p></div>
+</section>
+
+<section class="card mt" aria-labelledby="h-honest">
+  <h2 id="h-honest">What this demo is, and is not</h2>
+  <ul>
+    <li><b>Synthetic data only.</b> The benchmark uses generated records with deliberately impossible identifiers, so they can never be mistaken for real ones.</li>
+    <li><b>No real-world accuracy has been measured.</b> No production data has been scored. The benchmark numbers describe a synthetic test, not performance on real pensioners.</li>
+    <li><b>Manual pipeline.</b> Staff run the scoring pipeline by hand. It does not rescore automatically when a record arrives.</li>
+    <li><b>No payments are sent.</b> A release records a local state change and calculates arrears.</li>
+    <li><b>Staff pages need a named staff account.</b> There is no shared or demo login. The <a href="{{ url_for('dashboard') }}">staff dashboard</a> asks you to sign in.</li>
+  </ul>
+  <p class="muted">The <a href="{{ url_for('benchmark_page') }}">benchmark</a> measures a separate frozen research detector. It is shown on its own page and is not the score this app computes. <a href="{{ url_for('context_page') }}">Public data context</a> lists real, published aggregate statistics with sources.</p>
+  <p class="muted">Code and benchmark: <a href="https://github.com/Aditya2375/pension-integrity-monitor">github.com/Aditya2375/pension-integrity-monitor</a> (open source, MIT licence). Built by Aditya Kulkarni.</p>
+</section>
+{% endblock %}
