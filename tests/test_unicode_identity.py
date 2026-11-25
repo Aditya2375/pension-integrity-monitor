@@ -10,3 +10,17 @@ class IdentityTests(unittest.TestCase):
  def test_order(self):self.assertEqual(similarity('Patil Ramesh','Ramesh Patil'),1.)
  def test_fullwidth(self):self.assertEqual(normalize_name('ＲＡＭ'),'ram')
 if __name__=='__main__':unittest.main()
+
+class MatchingWiringTests(unittest.TestCase):
+ def test_hindi_names_match_in_pipeline_matcher(self):
+  from pim import matching
+  self.assertEqual(matching.name_match_pct('राम पाटिल','राम पाटिल'),1.)
+  self.assertGreater(matching.name_match_pct('राम पाटिल','रामा पाटिल'),.8)
+  m=matching.match_score({'name':'राम पाटिल','gender':'M','dob':'1950-01-01'},{'name':'राम पाटिल','gender':'M','dob':'1950-01-01'})
+  self.assertEqual(m[0],1.0)
+ def test_cross_script_not_guessed(self):
+  from pim import matching
+  self.assertEqual(matching.name_match_pct('राम पाटिल','Ram Patil'),0.)
+ def test_latin_unchanged(self):
+  from pim import matching
+  self.assertEqual(matching.name_match_pct('Sri Ramesh Patil','Ramesh  PATIL'),1.)

@@ -12,7 +12,7 @@ Date: 2026-11-03. Scope: full application (Flask app, ingestion, pipeline, templ
 4. Officer key compared with `==`, no rate limiting. Fixed: constant-time comparison (`secrets.compare_digest`) and a per-IP sliding-window throttle (5 failures / 15 min on sign-in, 20 posts / minute on the appeal portal). Session is cleared before it is established (fixation hygiene); `next` redirect target is restricted to local paths.
 5. No security headers. Fixed: X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy no-referrer, a restrictive Content-Security-Policy, and HSTS on HTTPS.
 6. Session cookies unhardened. Fixed: Secure (unless `PIM_INSECURE_HTTP=1` for local dev), HttpOnly, SameSite=Lax, 8-hour lifetime.
-7. No upload size limit. Fixed: 300 MB cap (`MAX_CONTENT_LENGTH`); uploads stream to disk with constant memory; only `.csv` uploads accepted; feed IDs are whitelisted against the schema registry.
+7. No upload size limit. Fixed: 300 MB cap (`MAX_CONTENT_LENGTH`); uploads are parsed as a stream in batches (ingestion memory is constant; the scoring run is not); only `.csv` uploads accepted; feed IDs are whitelisted against the schema registry.
 8. Unbounded text fields (appeal statement, contact, decision, tracking ID). Fixed: server-side length caps.
 9. Development server in production config, unpinned dependencies. Fixed: pinned flask 3.1.3, werkzeug 3.1.9, gunicorn 23.0.0; gunicorn start command in render.yaml.
 10. Unsafe temp-file creation and settings float parsing crash. Fixed: `mkstemp` and guarded parsing.

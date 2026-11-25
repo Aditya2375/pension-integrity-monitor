@@ -3,14 +3,7 @@ name-match percentage, gender match, and date-of-birth agreement.
 """
 import re, difflib
 
-STOPWORDS = {"sri", "smt", "shri", "mr", "mrs", "kumari", "dr"}
-
-def normalize_name(name):
-    if not name:
-        return ""
-    n = re.sub(r"[^a-z ]", " ", name.lower())
-    tokens = [t for t in n.split() if t and t not in STOPWORDS]
-    return " ".join(tokens)
+from detector.identity import normalize_name, scripts
 
 def soundex(name):
     """Classic Soundex, useful for Indian-name spelling variation."""
@@ -36,6 +29,10 @@ def name_match_pct(a, b):
     """Token-level similarity in [0,1]: best-pair alignment plus sequence ratio."""
     ta, tb = normalize_name(a).split(), normalize_name(b).split()
     if not ta or not tb:
+        return 0.0
+    # Unicode names (Devanagari, Arabic, ...) are compared in their own script.
+    # No transliteration is guessed: names in different scripts do not match.
+    if scripts(" ".join(ta)) != scripts(" ".join(tb)):
         return 0.0
     if set(ta) == set(tb):
         return 1.0

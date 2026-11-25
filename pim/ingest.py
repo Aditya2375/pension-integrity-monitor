@@ -105,8 +105,8 @@ def ingest_csv(conn, feed_id, text, source="LIVE"):
 
 def ingest_csv_stream(conn, feed_id, fileobj, source="LIVE"):
     """Stream a feed CSV from any text file object in constant memory:
-    batched executemany inserts in the caller-owned transaction. Millions of rows do
-    not materialise in memory."""
+    batched executemany inserts in the caller-owned transaction. Ingestion memory
+    does not grow with the file; the scoring run (pipeline) holds its match sets in RAM."""
     if feed_id not in FEED_SCHEMAS:
         raise ValueError("unknown feed: " + feed_id)
     s = FEED_SCHEMAS[feed_id]

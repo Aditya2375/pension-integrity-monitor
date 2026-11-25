@@ -4,6 +4,7 @@ outbox to the contact on record, never shown on screen unless the explicit
 synthetic-demo switch is on."""
 import hashlib
 import hmac
+import os
 import secrets
 from datetime import datetime, timedelta
 from . import notify
@@ -21,8 +22,15 @@ def ensure(conn):
     conn.executescript(DDL)
 
 
+# A six-digit code has only a million values, so an unkeyed hash can be
+# reversed instantly if the database leaks. Codes are stored as HMAC-SHA256
+# under a server-side key derived from PIM_SECRET (a random per-boot key when
+# it is unset, like the session key; codes then do not survive a restart).
+_KEY = hashlib.sha256(b"pim-otp-v1|" + (os.environ.get("PIM_SECRET") or secrets.token_hex(32)).encode()).digest()
+
+
 def _h(code, tid):
-    return hashlib.sha256(f"{tid}:{code}".encode()).hexdigest()
+    return hmac.new(_KEY, f"{tid}:{code}".encode(), hashlib.sha256).hexdigest()
 
 
 def _now():

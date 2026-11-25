@@ -643,7 +643,7 @@ def health_page():
 
 import math
 
-SETTING_BOUNDS = {"base_rate": (1e-6, 0.5, False), "match_threshold": (0.0, 1.0, False), "appeal_window_days": (1, 365, True), "notice_period_days": (1, 180, True)}
+SETTING_BOUNDS = {"base_rate": (1e-6, 0.5, False), "appeal_window_days": (1, 365, True), "notice_period_days": (1, 180, True)}
 
 def _num(v, name, lo=0.0, hi=1e12, integer=False):
     try:

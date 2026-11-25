@@ -173,7 +173,7 @@ class Feeds:
             prepped = []
             for i, r in enumerate(rows):
                 toks = frozenset(matching.normalize_name(r[nf]).split())
-                sx = frozenset(matching.soundex(t) for t in toks if len(t) >= 4)
+                sx = frozenset(x for x in (matching.soundex(t) for t in toks if len(t) >= 4) if x)
                 prepped.append((i, r, toks, sx, (r["gender"] or "").strip().lower()[:1], _ymd(r["dob"])))
             self._prepped[label] = prepped
             idx = {}
@@ -206,7 +206,7 @@ class Feeds:
         """Best candidate via inverted index (exact + soundex token union),
         DoB-first rejection, 0.62*name + 0.38*DoB score."""
         ptoks = frozenset(matching.normalize_name(p["full_name"]).split())
-        psx = frozenset(matching.soundex(t) for t in ptoks if len(t) >= 4)
+        psx = frozenset(x for x in (matching.soundex(t) for t in ptoks if len(t) >= 4) if x)
         pg = (p["gender"] or "").strip().lower()[:1]
         pdob = _ymd(p["dob"])
         cand = set()
@@ -267,6 +267,55 @@ def _assign(pm_rows, scan_args, id_of, aadhaar_rows=None, aadhaar_key=None, min_
         by_pid[pid] = (g, conf, rid)
     return by_pid
 
+
+# Which row of the `weights` table drives each likelihood-ratio constant:
+# constant -> (signal, 0 for lr_plus / 1 for lr_minus). The constants above are
+# the defaults and equal the default table. At run time every constant is
+# rescaled in log space by (table value / default table value), so editing a
+# weight or running feedback recalibration changes scoring, and the default
+# table reproduces the constants exactly.
+LR_DRIVERS = {
+    "LR_REG_STRONG_HI": ("death_registry_match", 0), "LR_REG_EXACT": ("death_registry_match", 0),
+    "LR_REG_STRONG_LO": ("death_registry_match", 1),
+    "LR_REG_WEAK": ("weak_lead_registry", 0),
+    "LR_HOSP_HI": ("hospital_died_match", 0), "LR_HOSP_LO": ("hospital_died_match", 1),
+    "LR_HOSP_WEAK": ("weak_lead_hospital", 0),
+    "LR_EROLL_HI": ("electoral_deletion", 0), "LR_EROLL_LO": ("electoral_deletion", 1),
+    "LR_PARTIAL_QUIET_BANK": ("bank_inactivity", 0), "LR_CHRONIC_BANK": ("bank_inactivity", 0),
+    "LR_ALIVE_BANK": ("bank_inactivity", 1),
+    "LR_PARTIAL_QUIET_TELE": ("telecom_quiet", 0), "LR_CHRONIC_TELE": ("telecom_quiet", 0),
+    "LR_ALIVE_TELE": ("telecom_quiet", 1),
+    "LR_ALIGNED": ("aligned_cliff", 0),
+    "LR_DLC_MISSING": ("life_cert_overdue", 0), "LR_DLC_MISSING_CESSATION": ("life_cert_overdue", 0),
+    "LR_DLC_PRESENT": ("life_cert_overdue", 1),
+    "LR_DLC_AFTER_DEATH": ("dlc_after_death", 1),
+    "LR_REUSE_BANK": ("family_reuse_bank", 0), "LR_DOUBT_BANK": ("family_reuse_bank", 1),
+    "LR_DOUBT_BOTH": ("family_reuse_bank", 1),
+    "LR_REUSE_SIM": ("family_reuse_sim", 0), "LR_DOUBT_SIM": ("family_reuse_sim", 1),
+    "LR_LEAKAGE_CREDIT": ("leakage_credit", 0), "LR_DOUBT_CREDIT": ("leakage_credit", 1),
+    "LR_ALIVE_PAN": ("alive_itr", 1),
+    "LR_ALIVE_UTIL": ("alive_utility", 1),
+    "LR_RESUME": ("dormancy_resume", 1),
+}
+_CLIFF_TIERS = {"RECENT": 25.0, "MID": 15.0, "OLD": 8.0, "WEAK": 5.0}
+
+def effective_lrs(w):
+    """Likelihood ratios for one run, driven by the weights table."""
+    def scale(default, signal, idx):
+        row = w.get(signal)
+        base = db.DEFAULT_WEIGHTS[signal][idx]
+        if not row or base <= 0 or base == 1.0:
+            return default
+        new = min(max(float(row[idx]), 1e-6), 1e6)
+        return default ** (math.log(new) / math.log(base))
+    L = {k: v for k, v in globals().items() if k.startswith("LR_") and isinstance(v, float)}
+    for const, (signal, idx) in LR_DRIVERS.items():
+        L[const] = scale(L[const], signal, idx)
+    for prefix, signal in (("BANK", "bank_cliff"), ("TELE", "telecom_cliff")):
+        for tier, default in _CLIFF_TIERS.items():
+            L[prefix + "_CLIFF_" + tier] = scale(default, signal, 0)
+    return L
+
 def run_pipeline(conn, today=None, snapshot=None, rng=None):
     import random
     rng = rng or random.SystemRandom()
@@ -275,6 +324,7 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
     p_star = scoring.cost_threshold(float(db.get_setting(conn, "cost_false_hold")),
                                     float(db.get_setting(conn, "cost_missed_death")))
     w = {r["signal"]: (r["lr_plus"], r["lr_minus"]) for r in conn.execute("SELECT * FROM weights")}
+    L = effective_lrs(w)
     F = Feeds(conn, snap)
 
     # scan every pensioner once per feed, paged; then one-to-one assignment
@@ -316,12 +366,12 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
         if pid in reg_by_pid:
             g, conf, rid = reg_by_pid[pid]
             if g == "exact":
-                contrib.append(("death_registry_match", 1, round(math.log(LR_REG_EXACT), 4)))
+                contrib.append(("death_registry_match", 1, round(math.log(L["LR_REG_EXACT"]), 4)))
             elif g == "strong":
                 contrib.append(("death_registry_match", 1,
-                                round(math.log(_lr_interp(conf, LR_REG_STRONG_LO, LR_REG_STRONG_HI)), 4)))
+                                round(math.log(_lr_interp(conf, L["LR_REG_STRONG_LO"], L["LR_REG_STRONG_HI"])), 4)))
             else:
-                contrib.append(("weak_lead_registry", 1, round(math.log(LR_REG_WEAK), 4)))
+                contrib.append(("weak_lead_registry", 1, round(math.log(L["LR_REG_WEAK"]), 4)))
             doc_grades.append(g)
             dd = _pd(reg_rows[rid]["date_of_death"])
             if dd:
@@ -331,9 +381,9 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
             hr = hosp_rows[hid]
             if g == "strong":
                 contrib.append(("hospital_died_match", 1,
-                                round(math.log(_lr_interp(conf, LR_HOSP_LO, LR_HOSP_HI)), 4)))
+                                round(math.log(_lr_interp(conf, L["LR_HOSP_LO"], L["LR_HOSP_HI"])), 4)))
             else:
-                contrib.append(("weak_lead_hospital", 1, round(math.log(LR_HOSP_WEAK), 4)))
+                contrib.append(("weak_lead_hospital", 1, round(math.log(L["LR_HOSP_WEAK"]), 4)))
             doc_grades.append(g)
             hd = _pd(hr["discharge_date"]) or _pd(hr["admit_date"])
             if hd:
@@ -343,7 +393,7 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
             ed = _pd(eroll_rows[eid]["deletion_date"])
             if ed is None or ed <= snap:
                 contrib.append(("electoral_deletion", 1,
-                                round(math.log(_lr_interp(conf, LR_EROLL_LO, LR_EROLL_HI)), 4)))
+                                round(math.log(_lr_interp(conf, L["LR_EROLL_LO"], L["LR_EROLL_HI"])), 4)))
                 doc_grades.append("strong")
                 if ed:
                     death_dates.append((ed, "strong"))
@@ -354,29 +404,29 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
         bank_stop = tele_stop = None
         if bk == "stop":
             bank_stop = bk_cm
-            lr = LR_CLIFF_RECENT if bk_ms <= 3 else (LR_CLIFF_MID if bk_ms <= 6 else LR_CLIFF_OLD)
+            lr = L["BANK_CLIFF_RECENT"] if bk_ms <= 3 else (L["BANK_CLIFF_MID"] if bk_ms <= 6 else L["BANK_CLIFF_OLD"])
             contrib.append(("bank_cliff", 1, round(math.log(lr), 4)))
         elif bk == "stop_weak":
             bank_stop = bk_cm
-            contrib.append(("bank_cliff", 1, round(math.log(LR_CLIFF_WEAK), 4)))
+            contrib.append(("bank_cliff", 1, round(math.log(L["BANK_CLIFF_WEAK"]), 4)))
         elif bk == "partial_quiet":
-            contrib.append(("bank_inactivity", 1, round(math.log(LR_PARTIAL_QUIET_BANK), 4)))
+            contrib.append(("bank_inactivity", 1, round(math.log(L["LR_PARTIAL_QUIET_BANK"]), 4)))
         elif bk == "chronic":
-            contrib.append(("bank_inactivity", 1, round(math.log(LR_CHRONIC_BANK), 4)))
+            contrib.append(("bank_inactivity", 1, round(math.log(L["LR_CHRONIC_BANK"]), 4)))
         if tk == "stop":
             tele_stop = tk_cm
-            lr = LR_CLIFF_RECENT if tk_ms <= 3 else (LR_CLIFF_MID if tk_ms <= 6 else LR_CLIFF_OLD)
+            lr = L["TELE_CLIFF_RECENT"] if tk_ms <= 3 else (L["TELE_CLIFF_MID"] if tk_ms <= 6 else L["TELE_CLIFF_OLD"])
             contrib.append(("telecom_cliff", 1, round(math.log(lr), 4)))
         elif tk == "stop_weak":
             tele_stop = tk_cm
-            contrib.append(("telecom_cliff", 1, round(math.log(LR_CLIFF_WEAK), 4)))
+            contrib.append(("telecom_cliff", 1, round(math.log(L["TELE_CLIFF_WEAK"]), 4)))
         elif tk == "partial_quiet":
-            contrib.append(("telecom_quiet", 1, round(math.log(LR_PARTIAL_QUIET_TELE), 4)))
+            contrib.append(("telecom_quiet", 1, round(math.log(L["LR_PARTIAL_QUIET_TELE"]), 4)))
         elif tk == "chronic":
-            contrib.append(("telecom_quiet", 1, round(math.log(LR_CHRONIC_TELE), 4)))
+            contrib.append(("telecom_quiet", 1, round(math.log(L["LR_CHRONIC_TELE"]), 4)))
         if bank_stop and tele_stop and abs((bank_stop.year * 12 + bank_stop.month)
                                            - (tele_stop.year * 12 + tele_stop.month)) <= 1:
-            contrib.append(("aligned_cliff", 1, round(math.log(LR_ALIGNED), 4)))
+            contrib.append(("aligned_cliff", 1, round(math.log(L["LR_ALIGNED"]), 4)))
 
         dd_pool = [d for d, g in death_dates]
         for c in (bank_stop, tele_stop):
@@ -388,15 +438,15 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
         # life certificate
         lc_d = F.last_cert.get(pid)
         if lc_d and ddate and lc_d > ddate:
-            contrib.append(("dlc_after_death", 0, round(math.log(LR_DLC_AFTER_DEATH), 4)))
+            contrib.append(("dlc_after_death", 0, round(math.log(L["LR_DLC_AFTER_DEATH"]), 4)))
         elif lc_d is None:
             contrib.append(("life_cert_overdue", 1, round(math.log(
-                LR_DLC_MISSING_CESSATION if (bank_stop or tele_stop) else LR_DLC_MISSING), 4)))
+                L["LR_DLC_MISSING_CESSATION"] if (bank_stop or tele_stop) else L["LR_DLC_MISSING"]), 4)))
         elif F.months(lc_d) > 12:
             contrib.append(("life_cert_overdue", 1, round(math.log(
-                LR_DLC_MISSING_CESSATION if (bank_stop or tele_stop) else LR_DLC_MISSING), 4)))
+                L["LR_DLC_MISSING_CESSATION"] if (bank_stop or tele_stop) else L["LR_DLC_MISSING"]), 4)))
         elif not ddate:
-            contrib.append(("life_cert_overdue", 0, round(math.log(LR_DLC_PRESENT), 4)))
+            contrib.append(("life_cert_overdue", 0, round(math.log(L["LR_DLC_PRESENT"]), 4)))
 
         # post-death-date activity: corroboration when the death is aadhaar-exact
         # (family reuse), doubt when the match is fuzzy
@@ -407,33 +457,33 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
         if ddate:
             if exact_death:
                 if bank_after:
-                    contrib.append(("family_reuse_bank", 1, round(math.log(LR_REUSE_BANK), 4)))
+                    contrib.append(("family_reuse_bank", 1, round(math.log(L["LR_REUSE_BANK"]), 4)))
                 if tele_after:
-                    contrib.append(("family_reuse_sim", 1, round(math.log(LR_REUSE_SIM), 4)))
+                    contrib.append(("family_reuse_sim", 1, round(math.log(L["LR_REUSE_SIM"]), 4)))
             else:
                 if bank_after and tele_after:
-                    contrib.append(("family_reuse_bank", 0, round(math.log(LR_DOUBT_BOTH), 4)))
+                    contrib.append(("family_reuse_bank", 0, round(math.log(L["LR_DOUBT_BOTH"]), 4)))
                 elif bank_after:
-                    contrib.append(("family_reuse_bank", 0, round(math.log(LR_DOUBT_BANK), 4)))
+                    contrib.append(("family_reuse_bank", 0, round(math.log(L["LR_DOUBT_BANK"]), 4)))
                 elif tele_after:
-                    contrib.append(("family_reuse_sim", 0, round(math.log(LR_DOUBT_SIM), 4)))
+                    contrib.append(("family_reuse_sim", 0, round(math.log(L["LR_DOUBT_SIM"]), 4)))
             dm = F.disb_months.get(pid, set())
             dkey = ddate.year * 100 + ddate.month
             if any(k > dkey for k in dm):
                 contrib.append(("leakage_credit", 1, round(math.log(
-                    LR_LEAKAGE_CREDIT if exact_death else LR_DOUBT_CREDIT), 4)))
+                    L["LR_LEAKAGE_CREDIT"] if exact_death else L["LR_DOUBT_CREDIT"]), 4)))
             pf = F.pan_filed.get(p["pan"])
             if pf and pf > ddate:
-                contrib.append(("alive_itr", 0, round(math.log(LR_PAN_AFTER_DEATH), 4)))
+                contrib.append(("alive_itr", 0, round(math.log(L["LR_PAN_AFTER_DEATH"]), 4)))
         else:
             bk_d = F.last_bank.get(p["bank_account"])
             if bk_d and F.months(bk_d) <= 2:
-                contrib.append(("bank_inactivity", 0, round(math.log(LR_ALIVE_BANK), 4)))
+                contrib.append(("bank_inactivity", 0, round(math.log(L["LR_ALIVE_BANK"]), 4)))
             if tl and F.months(tl) <= 1.2:
-                contrib.append(("telecom_quiet", 0, round(math.log(LR_ALIVE_TELE), 4)))
+                contrib.append(("telecom_quiet", 0, round(math.log(L["LR_ALIVE_TELE"]), 4)))
             pf = F.pan_filed.get(p["pan"])
             if pf and F.months(pf) <= 24:
-                contrib.append(("alive_itr", 0, round(math.log(LR_ALIVE_PAN), 4)))
+                contrib.append(("alive_itr", 0, round(math.log(L["LR_ALIVE_PAN"]), 4)))
             ptoks = frozenset(matching.normalize_name(p["full_name"]).split())
             hits = {}
             for t in ptoks:
@@ -447,7 +497,7 @@ def run_pipeline(conn, today=None, snapshot=None, rng=None):
                 if (matching.name_match_pct(p["full_name"], cname) >= 0.8
                         and difflib.SequenceMatcher(None, paddr, caddr).ratio() >= 0.6
                         and cpaid and F.months(cpaid) <= 2):
-                    contrib.append(("alive_utility", 0, round(math.log(LR_ALIVE_UTIL), 4)))
+                    contrib.append(("alive_utility", 0, round(math.log(L["LR_ALIVE_UTIL"]), 4)))
                     break
 
         if not contrib or not any(c[1] for c in contrib):
