@@ -3,6 +3,7 @@
 ## Configuration (environment)
 | variable | purpose |
 |---|---|
+| PIM_OFFICER_KEY | Legacy single deployment key. If no named account exists, it becomes the first admin account (username `admin`) once. |
 | PIM_USERS | `name:role:JUR1\|JUR2:key;...` first-run users (roles: officer, supervisor, auditor, admin). Stored as scrypt hashes. Stand-in for the department identity system. |
 | PIM_SECRET | session signing key, also the key for one-time-code hashes (required in any real deployment) |
 | PIM_TRUSTED_PROXIES | comma-separated CIDRs of your reverse proxy. Empty means the socket address is used and X-Forwarded-For is ignored. |

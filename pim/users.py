@@ -52,6 +52,22 @@ def bootstrap_from_env(conn):
     return n
 
 
+def bootstrap_legacy_key(conn):
+    """Older deployments set a single deployment key (PIM_OFFICER_KEY) instead
+    of PIM_USERS. When no named account exists yet, that key becomes the first
+    admin account, username 'admin', so an upgraded deployment is never locked
+    out of staff sign-in. Runs once: with any named account present it does
+    nothing, so named accounts always take over from the deployment key."""
+    if conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+        return False
+    key = os.environ.get("PIM_OFFICER_KEY")
+    if not key:
+        return False
+    create(conn, "admin", "admin", key, ("NA",))
+    conn.commit()
+    return True
+
+
 def get(conn, username):
     """Current, active user as an Actor, or None. Read fresh on every request."""
     r = conn.execute("SELECT * FROM users WHERE username=? AND active=1", (username or "",)).fetchone()

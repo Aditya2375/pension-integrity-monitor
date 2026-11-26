@@ -71,6 +71,7 @@ with app.app_context():
     _c = db.connect()
     wf.ensure_schema(_c)
     users.bootstrap_from_env(_c)
+    users.bootstrap_legacy_key(_c)
     _c.close()
 
 def conn():
