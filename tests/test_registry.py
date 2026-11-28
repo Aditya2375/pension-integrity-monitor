@@ -51,3 +51,22 @@ def test_no_post_route_can_hold_from_registry(fresh_db):
     for m in ("post", "put", "delete"):
         r = getattr(adm.c if m != "post" else adm, m)("/registry") if m != "post" else adm.post("/registry", {})
         assert r.status_code in (400, 404, 405)
+
+
+def test_registry_page_respects_jurisdiction(fresh_db):
+    """A user scoped to one state must not see registry-matched cases of another."""
+    adm = as_user("adm1")
+    load(adm)
+    c = db.connect()
+    full = registry.reconcile(c)
+    assert full["rows"], "fixture should have matched cases"
+    rows_scoped = registry.reconcile(c, {"ZZ_NOWHERE"})
+    assert rows_scoped["rows"] == [] and rows_scoped["matched_registrations"] == 0
+    assert rows_scoped["exposure_total"] == 0
+    c.close()
+    kar = as_user("kar1")
+    page = kar.get("/registry").data
+    for r in full["rows"]:
+        st = db.connect().execute("SELECT COALESCE(p.state,'NA') s FROM cases c JOIN pension_master p USING(pensioner_id) WHERE c.id=?", (r["case_id"],)).fetchone()["s"]
+        if st != "KA" and st != "Karnataka":
+            assert f"/case/{r['case_id']}\"".encode() not in page

@@ -700,7 +700,7 @@ def registry_page():
     r = officer_required()
     if r: return r
     c = conn()
-    rec = registry.reconcile(c)
+    rec = registry.reconcile(c, current_actor().jurisdictions)
     c.close()
     return render_template("registry.html", rec=rec)
 

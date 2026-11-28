@@ -37,8 +37,25 @@ def _paid_after(conn, pid, dod):
     return n, round(tot, 2)
 
 
-def reconcile(conn):
+def _in_scope(conn, pid, allowed):
+    r = conn.execute("SELECT COALESCE(state,'NA') AS st FROM pension_master WHERE pensioner_id=?", (pid,)).fetchone()
+    return (r["st"] if r else "NA") in allowed
+
+
+def reconcile(conn, jurisdictions=None):
+    """jurisdictions: the viewer's allowed pension_master.state values, or None
+    for no restriction. Registrations matched to a pensioner outside the viewer's
+    jurisdictions are left out entirely (rows, counts, lags, exposure)."""
     regs = conn.execute("SELECT * FROM death_registry").fetchall()
+    allowed = None if jurisdictions is None else set(jurisdictions)
+    hidden = set()
+    if allowed is not None:
+        for m in conn.execute("SELECT r.registration_no AS rn, COALESCE(p.state,'NA') AS st FROM cases c "
+                              "JOIN death_registry r ON r.registration_no=c.matched_death_id "
+                              "JOIN pension_master p ON p.pensioner_id=c.pensioner_id"):
+            if m["st"] not in allowed:
+                hidden.add(m["rn"])
+        regs = [r for r in regs if r["registration_no"] not in hidden]
     lags = []
     for r in regs:
         a, b = _d(r["date_of_death"]), _d(r["registration_date"])
@@ -47,6 +64,8 @@ def reconcile(conn):
     matched = conn.execute(
         "SELECT c.id, c.pensioner_id, c.state, c.matched_death_id, r.date_of_death, r.registration_no, r.registration_date "
         "FROM cases c JOIN death_registry r ON r.registration_no=c.matched_death_id").fetchall()
+    if allowed is not None:
+        matched = [m for m in matched if m["matched_death_id"] not in hidden and _in_scope(conn, m["pensioner_id"], allowed)]
     by_state = {}
     exposure_cases = 0
     exposure_total = 0.0
