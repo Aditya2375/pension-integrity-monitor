@@ -101,3 +101,7 @@ Aditya Kulkarni
 The current Flask app uses manual pipeline execution, not automatic ingestion-triggered rescoring. The frozen detector benchmark is separate from the app's configurable likelihood-ratio scorer. Neither app queue scores nor its manual workflow inherit the V15 benchmark automatically. No actual payments are sent: release records a local state change and calculates arrears.
 
 The latest tests run through pytest (not merely executing test files): `PYTHONPATH=. python -m pytest -q`. State is isolated per test module. Local checkpoint files detect a database/anchor rollback only when another checkpoint remains intact. If every local copy is controlled or rolled back together, independent verification is not possible.
+
+## Licence
+
+Apache License 2.0 (see `LICENSE` and `NOTICE`). Chosen over MIT because it carries an explicit patent grant and contribution terms, which matter for software meant to be adopted by a public body.

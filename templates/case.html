@@ -68,7 +68,8 @@
   <form method="post" action="{{ url_for('case_propose', cid=case['id']) }}">
     {{ csrf() }}
     <label for="reason">Written reasons (kept on the case and explained to the family on request)</label>
-    <textarea id="reason" name="reason" required maxlength="4000"></textarea>
+    {% if reg_draft %}<p class="muted">Draft from the death registry is pre-filled. Edit it. It is only a draft and proposes nothing until you press a button below.</p>{% endif %}
+    <textarea id="reason" name="reason" required maxlength="4000">{{ reg_draft or '' }}</textarea>
     <p><button class="btn warn" name="kind" value="hold">Propose a payment hold</button>
     <button class="btn warn" name="kind" value="confirm_death">Propose confirming a death</button></p>
   </form>

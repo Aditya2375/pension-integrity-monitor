@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <h2>Death registry reconciliation</h2>
+  <p class="muted">Registered deaths compared with the pension rolls. A registry match opens a review case. It never freezes anything by itself: a hold still needs the four checks, a second officer's approval, written reasons, notice to the family and an appeal window.</p>
+  <p>Registrations loaded: <b>{{ rec.registrations }}</b> &middot; matched to a pensioner: <b>{{ rec.matched_registrations }}</b> &middot; not matched: <b>{{ rec.unmatched_registrations }}</b></p>
+  <p>Median days from death to registration: <b>{{ rec.median_lag_days if rec.median_lag_days is not none else 'n/a' }}</b> &middot; registered after the 21-day window: <b>{{ rec.late_over_21_days }}</b> of {{ rec.lag_known }}</p>
+  <p>Matched cases with a pension credit after the registered date of death: <b>{{ rec.exposure_cases }}</b>, total <b>{{ '%.2f'|format(rec.exposure_total) }}</b></p>
+  <p class="muted">A death with no registration is invisible here. Registration is not complete everywhere, so a missing certificate does not mean the person is alive.</p>
+</div>
+<div class="card">
+  <h2>Matched cases, largest post-death payments first</h2>
+  <div class="table-wrap" role="region" tabindex="0" aria-label="Table (scrolls sideways on small screens)"><table>
+    <tr><th scope="col">Case</th><th scope="col">State</th><th scope="col">Registration</th><th scope="col">Date of death</th><th scope="col">Credits after</th><th scope="col">Amount</th></tr>
+    {% for r in rec.rows %}
+    <tr><td><a href="{{ url_for('case_detail', cid=r.case_id) }}">#{{ r.case_id }}</a></td><td>{{ r.state }}</td><td>{{ r.registration_no }}</td><td>{{ r.date_of_death }}</td><td>{{ r.paid_after_n }}</td><td>{{ '%.2f'|format(r.paid_after_total) }}</td></tr>
+    {% else %}
+    <tr><td colspan="6" class="muted">No registry-matched cases yet.</td></tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% endblock %}

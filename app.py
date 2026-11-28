@@ -2,7 +2,7 @@ import csv, hashlib, io, os, secrets, tempfile, uuid
 from datetime import datetime, timedelta
 from flask import (Flask, request, redirect, url_for, render_template,
                    session, abort, Response, send_file, g)
-from pim import db, ingest, pipeline, feedback, health, scoring, workflow as wf, audit, users, notify, otp, i18n, evidence
+from pim import registry, db, ingest, pipeline, feedback, health, scoring, workflow as wf, audit, users, notify, otp, i18n, evidence
 from pim.workflow import Actor, WorkflowError
 from security.web import install_csrf, client_ip, csv_cell
 from security.limiter import Limiter
@@ -332,8 +332,9 @@ def case_detail(cid):
     outbox = c.execute("SELECT id,template,status,attempts,created_at,last_error FROM notifications WHERE case_id=? ORDER BY id", (cid,)).fetchall()
     trail = [e for e in audit.events(c) if e["object_ref"] == f"case:{cid}"]
     pending = next((d for d in decisions if d["status"] == "PENDING"), None)
+    reg_draft = registry.draft_reasons(c, cid)
     c.close()
-    return render_template("case.html", case=case, sigs=sigs, ver=ver, match=match, appeals=appeals,
+    return render_template("case.html", reg_draft=reg_draft, case=case, sigs=sigs, ver=ver, match=match, appeals=appeals,
                            evidence=evidence, decisions=decisions, notes=notes, survivor=survivor,
                            reinst=reinst, outbox=outbox, delivery_ready=bool(app.config.get('NOTIFY_ADAPTER')), trail=trail, pending=pending, me=current_actor(), mask=_mask,
                            sla=wf.sla_status(case), now_iso=wf._now(), late_reasons=wf.LATE_REASONS)
@@ -693,6 +694,15 @@ def settings_page():
     p_star = scoring.cost_threshold(float(cur["cost_false_hold"]), float(cur["cost_missed_death"]))
     c.close()
     return render_template("settings.html", s=cur, weights=w, p_star=p_star, msg=msg)
+
+@app.route("/registry", methods=["GET"])
+def registry_page():
+    r = officer_required()
+    if r: return r
+    c = conn()
+    rec = registry.reconcile(c)
+    c.close()
+    return render_template("registry.html", rec=rec)
 
 @app.route("/feedback", methods=["GET"])
 def feedback_page():
