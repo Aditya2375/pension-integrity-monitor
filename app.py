@@ -162,8 +162,6 @@ def server_error(e):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     err = None
-    import sys as _sys   # TEMPORARY DIAGNOSTIC (remove): shows which client address headers reach the app
-    print("PIMDIAG peer=%s cf=%s tci=%s xff=%s resolved=%s" % (request.remote_addr, request.headers.get("CF-Connecting-IP"), request.headers.get("True-Client-IP"), request.headers.get("X-Forwarded-For"), ip()), file=_sys.stderr, flush=True)
     if request.method == "POST":
         who = (request.form.get("username") or "").strip()[:80]
         if not allow("login-ip", ip(), 10, 900) or not allow("login-user", who.lower(), 8, 900):

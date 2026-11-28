@@ -7,7 +7,7 @@ services:
     startCommand: gunicorn -w 2 --threads 4 -b 0.0.0.0:$PORT app:app
     envVars:
       - key: PIM_TRUSTED_PROXIES
-        value: 10.0.0.0/8,172.16.0.0/12,100.64.0.0/10,192.168.0.0/16
+        value: 127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,100.64.0.0/10,192.168.0.0/16
       - key: PIM_CLIENT_IP_HEADER
         value: CF-Connecting-IP
       - key: PIM_USERS
