@@ -38,7 +38,7 @@ def install_csrf(app):
         response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
         return response
 
-def client_ip(remote_addr, forwarded_for=None, trusted_proxy_cidrs=()):
+def client_ip(remote_addr, forwarded_for=None, trusted_proxy_cidrs=(), edge_header=None):
     """Walk right-to-left ONLY when the socket peer is an explicitly trusted proxy.
 
     The edge must overwrite untrusted forwarding headers. This does not trust
@@ -51,7 +51,16 @@ def client_ip(remote_addr, forwarded_for=None, trusted_proxy_cidrs=()):
     except ValueError:
         return remote_addr or 'unknown'
     trusted = lambda ip: any(ip in net for net in networks)
-    if not trusted(peer) or not forwarded_for:
+    if not trusted(peer):
+        return str(peer)
+    if edge_header:
+        # A header the edge (for example Cloudflare's CF-Connecting-IP) sets itself and
+        # overwrites. Honoured only when the socket peer is a trusted proxy. Bad value: fall back.
+        try:
+            return str(ipaddress.ip_address(edge_header.strip()))
+        except ValueError:
+            pass
+    if not forwarded_for:
         return str(peer)
     values = forwarded_for.split(',')
     if len(values) > 16:

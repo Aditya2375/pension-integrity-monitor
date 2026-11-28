@@ -7,6 +7,8 @@
 | PIM_USERS | `name:role:JUR1\|JUR2:key;...` first-run users (roles: officer, supervisor, auditor, admin). Stored as scrypt hashes. Stand-in for the department identity system. |
 | PIM_SECRET | session signing key, also the key for one-time-code hashes (required in any real deployment) |
 | PIM_TRUSTED_PROXIES | comma-separated CIDRs of your reverse proxy. Empty means the socket address is used and X-Forwarded-For is ignored. |
+| PIM_CLIENT_IP_HEADER | name of a header the edge sets itself, such as `CF-Connecting-IP` behind Render's Cloudflare. Used only when the socket peer is inside `PIM_TRUSTED_PROXIES`; otherwise ignored. |
+| PIM_IDLE_SECONDS | staff session idle timeout in seconds (default 1800) |
 | PIM_LIMITER_DB | path for the shared rate-limit store (local disk, not a network share) |
 | PIM_EVIDENCE_DIR | where appeal evidence files are kept (restricted directory) |
 | PIM_EVIDENCE_ENABLED | `1` turns on appeal document upload. Off by default. |

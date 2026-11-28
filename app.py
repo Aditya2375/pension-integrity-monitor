@@ -52,8 +52,13 @@ def allow(scope, ident, limit, window):
     return limiter().allow(key, limit, window)
 
 
+CLIENT_IP_HEADER = os.environ.get("PIM_CLIENT_IP_HEADER", "").strip()   # e.g. CF-Connecting-IP behind Render's Cloudflare edge
+IDLE_SECONDS = int(os.environ.get("PIM_IDLE_SECONDS", "1800") or 1800)
+
+
 def ip():
-    return client_ip(request.remote_addr, request.headers.get("X-Forwarded-For"), TRUSTED_PROXIES)
+    return client_ip(request.remote_addr, request.headers.get("X-Forwarded-For"), TRUSTED_PROXIES,
+                     request.headers.get(CLIENT_IP_HEADER) if CLIENT_IP_HEADER else None)
 
 
 @app.after_request
@@ -87,6 +92,15 @@ def current_actor():
         return g.actor
     actor = None
     name = session.get("user")
+    if name:
+        import time as _time
+        now = _time.time()
+        last = session.get("_t")
+        if not isinstance(last, (int, float)) or now - last > IDLE_SECONDS:
+            session.clear()   # idle too long, or a session from before idle tracking: sign in again
+            name = None
+        else:
+            session["_t"] = now
     if name:
         c = conn()
         try:
@@ -164,7 +178,8 @@ def login():
             c.close()
             if actor:
                 session.clear()   # new session and CSRF token after authentication
-                session.update(user=actor.username)
+                import time as _t0
+                session.update(user=actor.username, _t=_t0.time())
                 session.permanent = True
                 nxt = request.args.get("next") or ""
                 if not nxt.startswith("/") or nxt.startswith("//"):
